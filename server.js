@@ -1074,6 +1074,134 @@ function applyStoryRewards(gameState, aiText) {
   };
 }
 
+function applyRewardData(gameState, rewardData) {
+  const messages = [];
+
+  const goldChange = clampNumber(rewardData.goldChange, -100, 100, 0);
+
+  if (goldChange > 0) {
+    gameState.gold += goldChange;
+    messages.push(`${rewardData.goldReason || "금품 획득"}으로 ${goldChange}골드를 얻었다.`);
+  }
+
+  if (goldChange < 0) {
+    const loss = Math.min(gameState.gold, Math.abs(goldChange));
+    gameState.gold -= loss;
+    messages.push(`${rewardData.goldReason || "금품 손실"}으로 ${loss}골드를 잃었다.`);
+  }
+
+  const itemsGained = Array.isArray(rewardData.itemsGained)
+    ? rewardData.itemsGained
+    : [];
+
+  itemsGained.forEach((item) => {
+    if (!item || !item.name) return;
+
+    const safeItem = {
+      name: String(item.name).trim(),
+      type: ALLOWED_ITEM_TYPES.includes(item.type) ? item.type : "attack",
+      amount: 1,
+      effectValue: clampNumber(item.effectValue, 1, 30, 1),
+      consumable: Boolean(item.consumable),
+      equipped: false,
+      description: String(item.description || "").trim()
+    };
+
+    addItem(gameState, safeItem);
+    messages.push(`${safeItem.name}을 얻었다.`);
+  });
+
+  const itemsLost = Array.isArray(rewardData.itemsLost)
+    ? rewardData.itemsLost
+    : [];
+
+  itemsLost.forEach((name) => {
+    const removed = removeItemByName(gameState, String(name).trim());
+
+    if (removed) {
+      messages.push(`${name}을 잃었다.`);
+    }
+  });
+
+  return messages;
+}
+
+async function judgeStoryRewards(gameState, playerChoice, aiText) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 중세 판타지 RPG 보상 판정기다. 반드시 JSON만 출력한다."
+        },
+        {
+          role: "user",
+          content: `
+아래 내용을 보고 실제로 플레이어의 골드나 인벤토리가 바뀌었는지 판정해라.
+
+플레이어 상태:
+이름: ${gameState.playerName}
+직업: ${gameState.playerJob}
+현재 골드: ${gameState.gold}
+현재 인벤토리: ${inventoryText(gameState)}
+
+플레이어 행동:
+${playerChoice}
+
+진행된 장면:
+${aiText}
+
+판정 규칙:
+- 플레이어가 금품을 훔치거나 빼앗는 데 성공했다면 goldChange를 양수로 한다.
+- NPC가 돈을 주거나 보상으로 지급했다면 goldChange를 양수로 한다.
+- 벌금, 배상, 도난, 지불이 발생했다면 goldChange를 음수로 한다.
+- 단순히 시도만 했고 실패했다면 goldChange는 0이다.
+- 장면에 명확히 아이템을 얻었다고 나오면 itemsGained에 넣는다.
+- 장면에 명확히 아이템을 잃었다고 나오면 itemsLost에 넣는다.
+- 장면에 없는 보상을 새로 만들지 않는다.
+- 골드 변화는 -100~100 사이로 제한한다.
+- 아이템 type은 hp, mp, attack, defense, magic, heal 중 하나만 쓴다.
+- 회복 음식, 약초, 차, 포션은 hp 또는 mp로 둔다.
+- 무기, 목걸이, 반지, 부적은 attack, defense, magic, heal 중 적절히 둔다.
+- JSON만 출력한다.
+
+형식:
+{
+  "goldChange": 숫자,
+  "goldReason": "짧은 이유",
+  "itemsGained": [
+    {
+      "name": "아이템 이름",
+      "type": "attack",
+      "effectValue": 숫자,
+      "consumable": true 또는 false,
+      "description": "짧은 설명"
+    }
+  ],
+  "itemsLost": ["아이템 이름"]
+}
+`
+        }
+      ]
+    });
+
+    return parseJson(response.choices[0].message.content, {
+      goldChange: 0,
+      goldReason: "",
+      itemsGained: [],
+      itemsLost: []
+    });
+  } catch {
+    return {
+      goldChange: 0,
+      goldReason: "",
+      itemsGained: [],
+      itemsLost: []
+    };
+  }
+}
+
 app.post("/start", async (req, res) => {
   try {
     const { playerName, playerJob, sessionId } = req.body;
@@ -1348,13 +1476,20 @@ ${diceText}
     aiText = parseGoldUses(gameState, aiText);
 
     const storyRewardResult = applyStoryRewards(gameState, aiText);
-    aiText = storyRewardResult.text;
+aiText = storyRewardResult.text;
 
-    if (storyRewardResult.messages.length > 0) {
-      aiText +=
-        "\n\n획득/변동:\n" +
-        storyRewardResult.messages.map((message) => `- ${message}`).join("\n");
-    }
+let rewardMessages = [...storyRewardResult.messages];
+
+if (rewardMessages.length === 0) {
+  const judgedReward = await judgeStoryRewards(gameState, playerChoice, aiText);
+  rewardMessages = applyRewardData(gameState, judgedReward);
+}
+
+if (rewardMessages.length > 0) {
+  aiText +=
+    "\n\n획득/변동:\n" +
+    rewardMessages.map((message) => `- ${message}`).join("\n");
+}
 
     const explicitCombatMatch = aiText.match(/\[전투발생:(.+?)\]/);
     let combatJudgement = { combat: false, target: "" };
