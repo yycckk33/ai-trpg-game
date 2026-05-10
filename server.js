@@ -723,16 +723,88 @@ async function handleCombat(gameState, choice) {
     choice.includes("도주") ||
     choice.includes("후퇴")
   ) {
-    const escapeScore = dice + gameState.defenseBonus;
+    if (dice <= 2) {
+      const enemyDamage = Math.max(
+        1,
+        combat.monsterAttack - gameState.defenseBonus
+      );
 
-    if (escapeScore >= 5) {
-      gameState.combat.active = false;
+      gameState.hp -= enemyDamage;
+
+      text +=
+        `${gameState.playerName}은 전투에서 벗어나려 했지만 실패했다.\n` +
+        `도망칠 틈을 잡지 못했고, ${combat.monsterName}의 공격으로 ${enemyDamage} 피해를 입었다.\n`;
+
+      if (gameState.hp <= 0) {
+        gameState.hp = 0;
+        gameState.ended = true;
+        gameState.combat.active = false;
+
+        return {
+          text:
+            text +
+            `\n${gameState.playerName}은 도망치려다 쓰러졌다.\n\n` +
+            "엔딩:\n모험은 여기서 끝났다.",
+          choices: [],
+          dice,
+          turn: gameState.turn,
+          state: gameState
+        };
+      }
 
       return {
         text:
-          "설명:\n" +
-          `${gameState.playerName}은 틈을 노려 전투에서 벗어났다.\n` +
-          `${combat.monsterName}은 뒤쫓으려 했지만, 거리는 이미 벌어진 뒤였다.`,
+          text +
+          `\n현재 상태:\n` +
+          `${gameState.playerName} HP: ${gameState.hp}/${gameState.maxHp}\n` +
+          `${gameState.playerName} MP: ${gameState.mp}/${gameState.maxMp}\n` +
+          `${combat.monsterName} HP: ${combat.monsterHp}/${combat.monsterMaxHp}`,
+        choices: getCombatChoices(gameState),
+        dice,
+        turn: gameState.turn,
+        state: gameState
+      };
+    }
+
+    if (dice <= 4) {
+      const enemyDamage = Math.max(
+        0,
+        Math.floor(combat.monsterAttack / 2) - gameState.defenseBonus
+      );
+
+      gameState.hp -= enemyDamage;
+      gameState.combat.active = false;
+
+      let escapeText =
+        "설명:\n" +
+        `${gameState.playerName}은 아슬아슬하게 전투에서 벗어났다.\n`;
+
+      if (enemyDamage > 0) {
+        escapeText +=
+          `하지만 완전히 피하지는 못해 ${combat.monsterName}의 공격으로 ${enemyDamage} 피해를 입었다.\n`;
+      } else {
+        escapeText +=
+          `${combat.monsterName}의 공격이 스쳤지만, 큰 피해 없이 거리를 벌렸다.\n`;
+      }
+
+      if (gameState.hp <= 0) {
+        gameState.hp = 0;
+        gameState.ended = true;
+
+        return {
+          text:
+            escapeText +
+            `\n${gameState.playerName}은 도망에는 성공했지만, 상처를 버티지 못하고 쓰러졌다.\n\n` +
+            "엔딩:\n모험은 여기서 끝났다.",
+          choices: [],
+          dice,
+          turn: gameState.turn,
+          state: gameState
+        };
+      }
+
+      return {
+        text: escapeText,
         choices: ["숨을 고른다", "멀리 이동한다", "주변을 살핀다"],
         dice,
         turn: gameState.turn,
@@ -740,42 +812,14 @@ async function handleCombat(gameState, choice) {
       };
     }
 
-    const enemyDamage = Math.max(
-      1,
-      combat.monsterAttack - gameState.defenseBonus
-    );
-
-    gameState.hp -= enemyDamage;
-
-    text +=
-      `${gameState.playerName}은 전투에서 벗어나려 했지만 실패했다.\n` +
-      `${combat.monsterName}의 공격을 허용해 ${enemyDamage} 피해를 입었다.\n`;
-
-    if (gameState.hp <= 0) {
-      gameState.hp = 0;
-      gameState.ended = true;
-      gameState.combat.active = false;
-
-      return {
-        text:
-          text +
-          `\n${gameState.playerName}은 도망치려다 쓰러졌다.\n\n` +
-          "엔딩:\n모험은 여기서 끝났다.",
-        choices: [],
-        dice,
-        turn: gameState.turn,
-        state: gameState
-      };
-    }
+    gameState.combat.active = false;
 
     return {
       text:
-        text +
-        `\n현재 상태:\n` +
-        `${gameState.playerName} HP: ${gameState.hp}/${gameState.maxHp}\n` +
-        `${gameState.playerName} MP: ${gameState.mp}/${gameState.maxMp}\n` +
-        `${combat.monsterName} HP: ${combat.monsterHp}/${combat.monsterMaxHp}`,
-      choices: getCombatChoices(gameState),
+        "설명:\n" +
+        `${gameState.playerName}은 완벽한 틈을 잡아 전투에서 벗어났다.\n` +
+        `${combat.monsterName}은 뒤쫓으려 했지만, 이미 거리는 벌어진 뒤였다.`,
+      choices: ["숨을 고른다", "멀리 이동한다", "주변을 살핀다"],
       dice,
       turn: gameState.turn,
       state: gameState

@@ -5,6 +5,12 @@ if (!sessionId) {
   localStorage.setItem("trpgSessionId", sessionId);
 }
 
+function createFreshSession() {
+  sessionId = crypto.randomUUID();
+  localStorage.setItem("trpgSessionId", sessionId);
+  return sessionId;
+}
+
 function getInputValue(id, fallback) {
   const element = document.getElementById(id);
 
@@ -17,13 +23,23 @@ function getInputValue(id, fallback) {
 }
 
 function showError(error) {
+  const startScreen = document.getElementById("startScreen");
+  const gameScreen = document.getElementById("gameScreen");
   const story = document.getElementById("story");
+
+  if (startScreen) {
+    startScreen.style.display = "none";
+  }
+
+  if (gameScreen) {
+    gameScreen.style.display = "block";
+  }
 
   if (story) {
     story.textContent =
       "에러 발생:\n" +
       (error && error.message ? error.message : String(error)) +
-      "\n\n브라우저 콘솔도 확인해줘.";
+      "\n\n서버가 꺼졌거나, 코드 오류가 있거나, 응답이 늦어지는 중일 수 있다.";
   }
 
   console.error(error);
@@ -52,6 +68,8 @@ function updateStatus(state) {
 function updateInventory(state) {
   const info = document.getElementById("inventoryInfo");
   const buttons = document.getElementById("inventoryButtons");
+
+  if (!info || !buttons) return;
 
   if (!state || !state.inventory || state.inventory.length === 0) {
     info.innerHTML = "없음";
@@ -90,6 +108,8 @@ function updateCombat(state) {
   const combatBox = document.getElementById("combatBox");
   const combatInfo = document.getElementById("combatInfo");
 
+  if (!combatBox || !combatInfo) return;
+
   if (!state || !state.combat || !state.combat.active) {
     combatBox.style.display = "none";
     combatInfo.innerHTML = "";
@@ -108,6 +128,8 @@ function updateShop(state) {
   const shopBox = document.getElementById("shopBox");
   const shopInfo = document.getElementById("shopInfo");
   const shopButtons = document.getElementById("shopButtons");
+
+  if (!shopBox || !shopInfo || !shopButtons) return;
 
   if (!state || !state.shop || !state.shop.active) {
     shopBox.style.display = "none";
@@ -152,6 +174,9 @@ function updateShop(state) {
 
 function renderChoices(state, choices) {
   const choiceButtons = document.getElementById("choiceButtons");
+
+  if (!choiceButtons) return;
+
   choiceButtons.innerHTML = "";
 
   if (!choices || choices.length === 0) return;
@@ -189,10 +214,11 @@ async function postJson(url, body) {
   const text = await response.text();
 
   let data;
+
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error(`${url} 응답이 JSON 형식이 아님:\n${text}`);
+    throw new Error(`${url} 응답이 JSON 형식이 아니다.\n\n${text}`);
   }
 
   if (!response.ok) {
@@ -204,6 +230,8 @@ async function postJson(url, body) {
 
 async function startGame() {
   try {
+    createFreshSession();
+
     const playerName = getInputValue("nameInput", "이름 없는 자");
     const playerJob = getInputValue("jobInput", "모험가");
 
@@ -222,6 +250,12 @@ async function startGame() {
       "아직 정하지 못한 중대한 목표"
     );
 
+    const startButton = document.querySelector("#startScreen button");
+    if (startButton) {
+      startButton.disabled = true;
+      startButton.textContent = "시작 중...";
+    }
+
     const data = await postJson("/start", {
       sessionId,
       playerName,
@@ -234,15 +268,13 @@ async function startGame() {
     document.getElementById("startScreen").style.display = "none";
     document.getElementById("gameScreen").style.display = "block";
 
-    updateStatus(data.state);
-    updateInventory(data.state);
-    updateCombat(data.state);
-    updateShop(data.state);
+    updateAll({
+      ...data,
+      choices: []
+    });
 
     await sendChoice("게임 시작");
   } catch (error) {
-    document.getElementById("startScreen").style.display = "none";
-    document.getElementById("gameScreen").style.display = "block";
     showError(error);
   }
 }
@@ -254,22 +286,37 @@ async function sendChoice(choiceText) {
     const turnBox = document.getElementById("turn");
     const diceBox = document.getElementById("dice");
 
-    const choice = choiceText || input.value.trim() || "주변을 살핀다";
+    const choice =
+      choiceText ||
+      (input && input.value ? input.value.trim() : "") ||
+      "주변을 살핀다";
 
-    story.textContent = "진행 중...";
+    if (story) {
+      story.textContent = "진행 중...";
+    }
 
     const data = await postJson("/next", {
       sessionId,
       choice
     });
 
-    story.textContent = data.text || "응답 없음";
-    turnBox.textContent = "턴: " + (data.turn ?? 1);
-    diceBox.textContent = "주사위: " + (data.dice ?? "-");
+    if (story) {
+      story.textContent = data.text || "응답 없음";
+    }
+
+    if (turnBox) {
+      turnBox.textContent = "턴: " + (data.turn ?? 1);
+    }
+
+    if (diceBox) {
+      diceBox.textContent = "주사위: " + (data.dice ?? "-");
+    }
 
     updateAll(data);
 
-    input.value = "";
+    if (input) {
+      input.value = "";
+    }
   } catch (error) {
     showError(error);
   }
@@ -277,6 +324,8 @@ async function sendChoice(choiceText) {
 
 async function resetGame() {
   try {
+    createFreshSession();
+
     await postJson("/reset", {
       sessionId
     });
@@ -288,6 +337,6 @@ async function resetGame() {
 }
 
 function newPlayerSession() {
-  localStorage.removeItem("trpgSessionId");
+  createFreshSession();
   location.reload();
 }
