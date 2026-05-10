@@ -26,6 +26,10 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+const ALLOWED_ITEM_TYPES = ["hp", "mp", "attack", "defense", "magic", "heal"];
+
+const gameStates = {};
+
 function createNewGameState() {
   return {
     playerName: "",
@@ -89,8 +93,6 @@ function createNewGameState() {
   };
 }
 
-const gameStates = {};
-
 function getGameState(sessionId) {
   if (!sessionId) {
     throw new Error("sessionId가 없습니다.");
@@ -125,8 +127,32 @@ function parseJson(text, fallback) {
   }
 }
 
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+
+  if (Number.isNaN(number)) {
+    return fallback;
+  }
+
+  return Math.max(min, Math.min(max, number));
+}
+
+function normalizeItem(item) {
+  const type = ALLOWED_ITEM_TYPES.includes(item.type) ? item.type : "attack";
+
+  return {
+    name: String(item.name || "이름 없는 아이템").trim(),
+    type,
+    amount: Number(item.amount) > 0 ? Number(item.amount) : 1,
+    effectValue: clampNumber(item.effectValue, 1, 30, 1),
+    consumable: Boolean(item.consumable),
+    equipped: Boolean(item.equipped),
+    description: String(item.description || "").trim()
+  };
+}
+
 function inventoryText(gameState) {
-  if (gameState.inventory.length === 0) {
+  if (!gameState.inventory || gameState.inventory.length === 0) {
     return "없음";
   }
 
@@ -139,22 +165,16 @@ function inventoryText(gameState) {
 }
 
 function addItem(gameState, item) {
-  const existing = gameState.inventory.find((i) => i.name === item.name);
+  const normalized = normalizeItem(item);
+
+  const existing = gameState.inventory.find((i) => i.name === normalized.name);
 
   if (existing) {
-    existing.amount += 1;
+    existing.amount += normalized.amount;
     return;
   }
 
-  gameState.inventory.push({
-    name: item.name,
-    type: item.type,
-    amount: 1,
-    effectValue: item.effectValue,
-    consumable: item.consumable,
-    equipped: false,
-    description: item.description || ""
-  });
+  gameState.inventory.push(normalized);
 }
 
 function removeItemByName(gameState, name) {
@@ -193,7 +213,36 @@ function useItem(gameState, choice) {
     };
   }
 
-  if (item.type === "hp") {
+  const itemText = `${item.name} ${item.description || ""}`;
+
+  const looksLikeHpRecovery =
+    item.type === "hp" ||
+    (
+      item.consumable &&
+      item.type === "heal" &&
+      (
+        itemText.includes("HP") ||
+        itemText.includes("체력") ||
+        itemText.includes("회복") ||
+        itemText.includes("치유") ||
+        itemText.includes("약초") ||
+        itemText.includes("허브") ||
+        itemText.includes("음식") ||
+        itemText.includes("차")
+      )
+    );
+
+  const looksLikeMpRecovery =
+    item.type === "mp" ||
+    (
+      item.consumable &&
+      (
+        itemText.includes("MP") ||
+        itemText.includes("마나")
+      )
+    );
+
+  if (looksLikeHpRecovery) {
     if (gameState.hp >= gameState.maxHp) {
       return {
         success: false,
@@ -201,7 +250,9 @@ function useItem(gameState, choice) {
       };
     }
 
+    const before = gameState.hp;
     gameState.hp = Math.min(gameState.maxHp, gameState.hp + item.effectValue);
+    const healed = gameState.hp - before;
 
     if (item.consumable) {
       removeItemByName(gameState, item.name);
@@ -209,11 +260,11 @@ function useItem(gameState, choice) {
 
     return {
       success: true,
-      text: `${item.name}을 사용해 HP를 ${item.effectValue} 회복했다.`
+      text: `${item.name}을 사용해 HP를 ${healed} 회복했다.`
     };
   }
 
-  if (item.type === "mp") {
+  if (looksLikeMpRecovery) {
     if (gameState.mp >= gameState.maxMp) {
       return {
         success: false,
@@ -221,7 +272,9 @@ function useItem(gameState, choice) {
       };
     }
 
+    const before = gameState.mp;
     gameState.mp = Math.min(gameState.maxMp, gameState.mp + item.effectValue);
+    const recovered = gameState.mp - before;
 
     if (item.consumable) {
       removeItemByName(gameState, item.name);
@@ -229,7 +282,7 @@ function useItem(gameState, choice) {
 
     return {
       success: true,
-      text: `${item.name}을 사용해 MP를 ${item.effectValue} 회복했다.`
+      text: `${item.name}을 사용해 MP를 ${recovered} 회복했다.`
     };
   }
 
@@ -292,6 +345,7 @@ ${playerJob}
 - defenseBonus는 0~8
 - magicBonus는 0~8
 - 직업 이름의 분위기와 역할을 반영한다.
+- 바나나 판매상, 광대, 농부, 왕자, 요리사 같은 비전투 직업도 적당히 해석한다.
 - 너무 강하게 만들지 않는다.
 - JSON만 출력한다.
 
@@ -312,12 +366,12 @@ ${playerJob}
     const stats = parseJson(response.choices[0].message.content, {});
 
     return {
-      maxHp: stats.maxHp || 30,
-      maxMp: stats.maxMp || 10,
-      attackBonus: stats.attackBonus ?? 1,
-      healBonus: stats.healBonus ?? 1,
-      defenseBonus: stats.defenseBonus ?? 1,
-      magicBonus: stats.magicBonus ?? 1
+      maxHp: clampNumber(stats.maxHp, 15, 50, 30),
+      maxMp: clampNumber(stats.maxMp, 5, 40, 10),
+      attackBonus: clampNumber(stats.attackBonus, 0, 8, 1),
+      healBonus: clampNumber(stats.healBonus, 0, 8, 1),
+      defenseBonus: clampNumber(stats.defenseBonus, 0, 8, 1),
+      magicBonus: clampNumber(stats.magicBonus, 0, 8, 1)
     };
   } catch {
     return {
@@ -368,8 +422,8 @@ ${monsterName}
     const stats = parseJson(response.choices[0].message.content, {});
 
     return {
-      hp: stats.hp || 15,
-      attack: stats.attack || 5
+      hp: clampNumber(stats.hp, 5, 120, 15),
+      attack: clampNumber(stats.attack, 1, 20, 5)
     };
   } catch {
     return {
@@ -418,7 +472,7 @@ ${dice}
     const reward = parseJson(response.choices[0].message.content, {});
 
     return {
-      gold: Math.max(0, Math.min(80, reward.gold ?? 5)),
+      gold: clampNumber(reward.gold, 0, 80, 5),
       reason: reward.reason || "전투 보상"
     };
   } catch {
@@ -460,6 +514,27 @@ async function finishCombat(gameState, dice) {
 }
 
 async function generateShopItems(gameState) {
+  const baseItems = [
+    {
+      name: "체력 포션",
+      price: 10,
+      type: "hp",
+      effectValue: 15,
+      consumable: true,
+      equipped: false,
+      description: "HP를 회복한다."
+    },
+    {
+      name: "마나 포션",
+      price: 15,
+      type: "mp",
+      effectValue: 10,
+      consumable: true,
+      equipped: false,
+      description: "MP를 회복한다."
+    }
+  ];
+
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4.1-mini",
@@ -480,7 +555,7 @@ ${gameState.playerJob} ${gameState.playerName}
 상점 상품 3개를 만들어라.
 
 규칙:
-- 체력 포션과 마나 포션은 내가 기본으로 넣을 것이므로 만들지 않는다.
+- 체력 포션과 마나 포션은 기본으로 들어가므로 만들지 않는다.
 - 무기, 장신구, 음식, 도구, 부적, 차, 반지, 목걸이 등을 섞는다.
 - 가격은 5~80골드.
 - effectValue는 1~20.
@@ -512,59 +587,18 @@ ${gameState.playerJob} ${gameState.playerName}
       .filter((item) => item.name && item.price && item.type && item.effectValue)
       .slice(0, 3)
       .map((item) => ({
-        name: String(item.name),
-        price: Math.max(1, Math.min(100, Number(item.price))),
-        type: ["hp", "mp", "attack", "defense", "magic", "heal"].includes(item.type)
-          ? item.type
-          : "attack",
-        effectValue: Math.max(1, Math.min(30, Number(item.effectValue))),
+        name: String(item.name).trim(),
+        price: clampNumber(item.price, 5, 100, 10),
+        type: ALLOWED_ITEM_TYPES.includes(item.type) ? item.type : "attack",
+        effectValue: clampNumber(item.effectValue, 1, 30, 1),
         consumable: Boolean(item.consumable),
         equipped: false,
-        description: item.description || ""
+        description: String(item.description || "").trim()
       }));
 
-    return [
-      {
-        name: "체력 포션",
-        price: 10,
-        type: "hp",
-        effectValue: 15,
-        consumable: true,
-        equipped: false,
-        description: "HP를 회복한다."
-      },
-      {
-        name: "마나 포션",
-        price: 15,
-        type: "mp",
-        effectValue: 10,
-        consumable: true,
-        equipped: false,
-        description: "MP를 회복한다."
-      },
-      ...safeAiItems
-    ];
+    return [...baseItems, ...safeAiItems];
   } catch {
-    return [
-      {
-        name: "체력 포션",
-        price: 10,
-        type: "hp",
-        effectValue: 15,
-        consumable: true,
-        equipped: false,
-        description: "HP를 회복한다."
-      },
-      {
-        name: "마나 포션",
-        price: 15,
-        type: "mp",
-        effectValue: 10,
-        consumable: true,
-        equipped: false,
-        description: "MP를 회복한다."
-      }
-    ];
+    return baseItems;
   }
 }
 
@@ -611,14 +645,13 @@ function handleShop(gameState, choice) {
   }
 
   const itemName = choice.replace(" 구매", "").trim();
-
-  const item = gameState.shop.items.find((item) => item.name === itemName);
+  const item = gameState.shop.items.find((shopItem) => shopItem.name === itemName);
 
   if (!item) {
     return {
       text: `설명:\n${itemName}은 이 상점에 없다.`,
       choices: [
-        ...gameState.shop.items.map((item) => `${item.name} 구매`),
+        ...gameState.shop.items.map((shopItem) => `${shopItem.name} 구매`),
         "상점 나가기"
       ],
       dice: "-",
@@ -631,7 +664,7 @@ function handleShop(gameState, choice) {
     return {
       text: `설명:\n골드가 부족하다. ${item.name}을 구매하려면 ${item.price}골드가 필요하다.`,
       choices: [
-        ...gameState.shop.items.map((item) => `${item.name} 구매`),
+        ...gameState.shop.items.map((shopItem) => `${shopItem.name} 구매`),
         "상점 나가기"
       ],
       dice: "-",
@@ -649,7 +682,7 @@ function handleShop(gameState, choice) {
       `보유 골드: ${gameState.gold}\n` +
       `인벤토리: ${inventoryText(gameState)}`,
     choices: [
-      ...gameState.shop.items.map((item) => `${item.name} 구매`),
+      ...gameState.shop.items.map((shopItem) => `${shopItem.name} 구매`),
       "상점 나가기"
     ],
     dice: "-",
@@ -657,7 +690,16 @@ function handleShop(gameState, choice) {
     state: gameState
   };
 }
-
+function getCombatChoices(gameState) {
+  return [
+    "공격한다",
+    "방어한다",
+    "스킬 공격",
+    "스킬 회복",
+    "도망간다",
+    ...gameState.inventory.map((item) => `${item.name} 사용`)
+  ];
+}
 async function handleCombat(gameState, choice) {
   const combat = gameState.combat;
   const dice = Math.floor(Math.random() * 6) + 1;
@@ -665,11 +707,77 @@ async function handleCombat(gameState, choice) {
   let text = "설명:\n";
   let enemyCanCounter = true;
 
+  if (
+    choice.includes("도망") ||
+    choice.includes("도주") ||
+    choice.includes("후퇴")
+  ) {
+    const escapeScore = dice + gameState.defenseBonus;
+
+    if (escapeScore >= 5) {
+      gameState.combat.active = false;
+
+      return {
+        text:
+          "설명:\n" +
+          `${gameState.playerName}은 틈을 노려 전투에서 벗어났다.\n` +
+          `${combat.monsterName}은 뒤쫓으려 했지만, 거리는 이미 벌어진 뒤였다.`,
+        choices: ["숨을 고른다", "멀리 이동한다", "주변을 살핀다"],
+        dice,
+        turn: gameState.turn,
+        state: gameState
+      };
+    }
+
+    const enemyDamage = Math.max(
+      1,
+      combat.monsterAttack - gameState.defenseBonus
+    );
+
+    gameState.hp -= enemyDamage;
+
+    text +=
+      `${gameState.playerName}은 전투에서 벗어나려 했지만 실패했다.\n` +
+      `${combat.monsterName}의 공격을 허용해 ${enemyDamage} 피해를 입었다.\n`;
+
+    if (gameState.hp <= 0) {
+      gameState.hp = 0;
+      gameState.ended = true;
+      gameState.combat.active = false;
+
+      return {
+        text:
+          text +
+          `\n${gameState.playerName}은 도망치려다 쓰러졌다.\n\n` +
+          "엔딩:\n모험은 여기서 끝났다.",
+        choices: [],
+        dice,
+        turn: gameState.turn,
+        state: gameState
+      };
+    }
+
+    return {
+      text:
+        text +
+        `\n현재 상태:\n` +
+        `${gameState.playerName} HP: ${gameState.hp}/${gameState.maxHp}\n` +
+        `${gameState.playerName} MP: ${gameState.mp}/${gameState.maxMp}\n` +
+        `${combat.monsterName} HP: ${combat.monsterHp}/${combat.monsterMaxHp}`,
+      choices: getCombatChoices(gameState),
+      dice,
+      turn: gameState.turn,
+      state: gameState
+    };
+  }
+
   if (choice.includes(" 사용")) {
     const result = useItem(gameState, choice);
     text += result.text + "\n";
 
-    if (!result.success) enemyCanCounter = false;
+    if (!result.success) {
+      enemyCanCounter = false;
+    }
   } else if (choice.includes("스킬 공격")) {
     const cost = 5;
 
@@ -698,10 +806,14 @@ async function handleCombat(gameState, choice) {
       gameState.mp -= cost;
 
       const heal = 10 + dice + gameState.healBonus + gameState.magicBonus;
+      const before = gameState.hp;
+
       gameState.hp = Math.min(gameState.maxHp, gameState.hp + heal);
 
+      const actualHeal = gameState.hp - before;
+
       text += `${gameState.playerName}은 MP ${cost}를 소모해 회복 스킬을 사용했다.\n`;
-      text += `HP를 ${heal} 회복했다.\n`;
+      text += `HP를 ${actualHeal} 회복했다.\n`;
     }
   } else if (choice.includes("방어")) {
     const enemyDamage = Math.max(
@@ -772,13 +884,7 @@ async function handleCombat(gameState, choice) {
       `${gameState.playerName} HP: ${gameState.hp}/${gameState.maxHp}\n` +
       `${gameState.playerName} MP: ${gameState.mp}/${gameState.maxMp}\n` +
       `${combat.monsterName} HP: ${combat.monsterHp}/${combat.monsterMaxHp}`,
-    choices: [
-      "공격한다",
-      "방어한다",
-      "스킬 공격",
-      "스킬 회복",
-      ...gameState.inventory.map((item) => `${item.name} 사용`)
-    ],
+    choices: getCombatChoices(gameState),
     dice,
     turn: gameState.turn,
     state: gameState
@@ -848,7 +954,9 @@ function handleGoldUse(gameState, choice) {
     choice.includes(use.name)
   );
 
-  if (!goldUse) return null;
+  if (!goldUse) {
+    return null;
+  }
 
   if (gameState.gold < goldUse.cost) {
     return {
@@ -885,6 +993,87 @@ function parseGoldUses(gameState, aiText) {
   return aiText.replace(/\[골드사용:.+?:\d+:.+?\]/g, "").trim();
 }
 
+function applyStoryRewards(gameState, aiText) {
+  const messages = [];
+
+  const goldGainMatches = [...aiText.matchAll(/\[골드획득:(\d+):(.+?)\]/g)];
+
+  goldGainMatches.forEach((match) => {
+    const amount = Number(match[1]);
+    const reason = match[2].trim();
+
+    if (amount > 0) {
+      gameState.gold += amount;
+      messages.push(`${reason}으로 ${amount}골드를 얻었다.`);
+    }
+  });
+
+  aiText = aiText.replace(/\[골드획득:\d+:.+?\]/g, "").trim();
+
+  const goldLossMatches = [...aiText.matchAll(/\[골드손실:(\d+):(.+?)\]/g)];
+
+  goldLossMatches.forEach((match) => {
+    const amount = Number(match[1]);
+    const reason = match[2].trim();
+    const actualLoss = Math.min(gameState.gold, amount);
+
+    if (actualLoss > 0) {
+      gameState.gold -= actualLoss;
+      messages.push(`${reason}으로 ${actualLoss}골드를 잃었다.`);
+    }
+  });
+
+  aiText = aiText.replace(/\[골드손실:\d+:.+?\]/g, "").trim();
+
+  const itemGainMatches = [
+    ...aiText.matchAll(/\[아이템획득:([^:\]]+):([^:\]]+):(\d+):(true|false):([^\]]+)\]/g)
+  ];
+
+  itemGainMatches.forEach((match) => {
+    const name = match[1].trim();
+    const rawType = match[2].trim();
+    const effectValue = Number(match[3]);
+    const consumable = match[4] === "true";
+    const description = match[5].trim();
+
+    const type = ALLOWED_ITEM_TYPES.includes(rawType) ? rawType : "attack";
+
+    addItem(gameState, {
+      name,
+      type,
+      amount: 1,
+      effectValue: Math.max(1, Math.min(30, effectValue)),
+      consumable,
+      equipped: false,
+      description
+    });
+
+    messages.push(`${name}을 얻었다.`);
+  });
+
+  aiText = aiText
+    .replace(/\[아이템획득:[^:\]]+:[^:\]]+:\d+:(true|false):[^\]]+\]/g, "")
+    .trim();
+
+  const itemLossMatches = [...aiText.matchAll(/\[아이템손실:([^\]]+)\]/g)];
+
+  itemLossMatches.forEach((match) => {
+    const name = match[1].trim();
+    const removed = removeItemByName(gameState, name);
+
+    if (removed) {
+      messages.push(`${name}을 잃었다.`);
+    }
+  });
+
+  aiText = aiText.replace(/\[아이템손실:[^\]]+\]/g, "").trim();
+
+  return {
+    text: aiText,
+    messages
+  };
+}
+
 app.post("/start", async (req, res) => {
   try {
     const { playerName, playerJob, sessionId } = req.body;
@@ -906,12 +1095,12 @@ app.post("/start", async (req, res) => {
     gameState.defenseBonus = jobStats.defenseBonus;
     gameState.magicBonus = jobStats.magicBonus;
 
-    res.json({
+    return res.json({
       message: "게임 시작",
       state: gameState
     });
   } catch (error) {
-    res.status(400).json({
+    return res.status(400).json({
       text: "에러 발생: " + error.message,
       choices: [],
       dice: "-",
@@ -926,12 +1115,12 @@ app.post("/reset", (req, res) => {
     const { sessionId } = req.body;
     const gameState = resetGameState(sessionId);
 
-    res.json({
+    return res.json({
       message: "새 게임 시작",
       state: gameState
     });
   } catch (error) {
-    res.status(400).json({
+    return res.status(400).json({
       text: "에러 발생: " + error.message,
       choices: [],
       dice: "-",
@@ -986,13 +1175,7 @@ app.post("/next", async (req, res) => {
           `${gameState.playerName} HP: ${gameState.hp}/${gameState.maxHp}\n` +
           `${gameState.playerName} MP: ${gameState.mp}/${gameState.maxMp}\n` +
           `${monsterName} HP: ${gameState.combat.monsterHp}/${gameState.combat.monsterMaxHp}`,
-        choices: [
-          "공격한다",
-          "방어한다",
-          "스킬 공격",
-          "스킬 회복",
-          ...gameState.inventory.map((item) => `${item.name} 사용`)
-        ],
+        choices: getCombatChoices(gameState),
         dice: "-",
         turn: gameState.turn,
         state: gameState
@@ -1020,7 +1203,27 @@ app.post("/next", async (req, res) => {
       });
     }
 
-    if (playerChoice.includes("상점") || playerChoice.includes("상인")) {
+    const hostileToMerchant =
+      playerChoice.includes("훔치") ||
+      playerChoice.includes("훔쳐") ||
+      playerChoice.includes("뺏") ||
+      playerChoice.includes("빼앗") ||
+      playerChoice.includes("강탈") ||
+      playerChoice.includes("협박") ||
+      playerChoice.includes("공격") ||
+      playerChoice.includes("죽") ||
+      playerChoice.includes("털");
+
+    const wantsShop =
+      playerChoice.includes("상점") ||
+      playerChoice.includes("상점을") ||
+      playerChoice.includes("상점 찾") ||
+      playerChoice.includes("상인과 거래") ||
+      playerChoice.includes("상인에게 물건") ||
+      playerChoice.includes("상인에게 구매") ||
+      playerChoice.includes("구매한다");
+
+    if (wantsShop && !hostileToMerchant) {
       return res.json(await openShop(gameState));
     }
 
@@ -1100,6 +1303,15 @@ ${diceText}
 - 선택지는 반드시 3개.
 - 상인이나 상점이 등장하면 상황에 맞는 물건을 살 수 있다.
 - 상황상 돈을 쓸 수 있으면 [골드사용:이름:비용:효과] 형식을 한 줄로 추가할 수 있다.
+- 플레이어가 돈을 얻는 행동에 성공하면 [골드획득:금액:이유] 형식을 한 줄로 추가한다.
+- 플레이어가 돈을 잃으면 [골드손실:금액:이유] 형식을 한 줄로 추가한다.
+- 플레이어가 아이템을 얻으면 [아이템획득:이름:type:effectValue:consumable:설명] 형식을 한 줄로 추가한다.
+- type은 hp, mp, attack, defense, magic, heal 중 하나만 쓴다.
+- consumable은 true 또는 false만 쓴다.
+- 플레이어가 아이템을 잃으면 [아이템손실:이름] 형식을 한 줄로 추가한다.
+- NPC가 선물하거나, 플레이어가 훔치거나, 빼앗거나, 보상으로 받거나, 주워도 실제 획득으로 처리한다.
+- 상인을 공격하거나 협박하거나 훔치려는 행동을 상점 이용으로 바꾸지 않는다.
+- 훔치기나 강탈은 성공할 수도 실패할 수도 있으며, 실패하면 전투, 골드 손실, 평판 악화로 이어질 수 있다.
 - 실제 물리적 전투가 시작되는 장면이라면 마지막 줄에 [전투발생:전투대상이름]을 출력할 수 있다.
 - 전투 수치 계산은 코드가 하므로 AI는 전투 데미지와 HP 계산을 하지 않는다.
 - 일반 장면에서는 주사위를 언급하지 않는다.
@@ -1132,7 +1344,17 @@ ${diceText}
     });
 
     let aiText = response.choices[0].message.content;
+
     aiText = parseGoldUses(gameState, aiText);
+
+    const storyRewardResult = applyStoryRewards(gameState, aiText);
+    aiText = storyRewardResult.text;
+
+    if (storyRewardResult.messages.length > 0) {
+      aiText +=
+        "\n\n획득/변동:\n" +
+        storyRewardResult.messages.map((message) => `- ${message}`).join("\n");
+    }
 
     const explicitCombatMatch = aiText.match(/\[전투발생:(.+?)\]/);
     let combatJudgement = { combat: false, target: "" };
@@ -1163,13 +1385,7 @@ ${diceText}
           `${gameState.playerName} HP: ${gameState.hp}/${gameState.maxHp}\n` +
           `${gameState.playerName} MP: ${gameState.mp}/${gameState.maxMp}\n` +
           `${monsterName} HP: ${gameState.combat.monsterHp}/${gameState.combat.monsterMaxHp}`,
-        choices: [
-          "공격한다",
-          "방어한다",
-          "스킬 공격",
-          "스킬 회복",
-          ...gameState.inventory.map((item) => `${item.name} 사용`)
-        ],
+        choices: getCombatChoices(gameState),
         dice: "-",
         turn: gameState.turn,
         state: gameState
@@ -1178,7 +1394,7 @@ ${diceText}
 
     gameState.history.push(`${gameState.turn}턴: ${playerChoice}`);
 
-    if (gameState.turn >= gameState.maxTurn) {
+        if (gameState.turn >= gameState.maxTurn) {
       gameState.ended = true;
 
       const endingResponse = await openai.chat.completions.create({
@@ -1233,7 +1449,7 @@ ${aiText}
     gameState.lastChoices = choices;
     gameState.turn += 1;
 
-    res.json({
+    return res.json({
       text: aiText,
       choices,
       dice: dice === null ? "-" : dice,
@@ -1241,7 +1457,7 @@ ${aiText}
       state: gameState
     });
   } catch (error) {
-    res.json({
+    return res.json({
       text: "에러 발생: " + error.message,
       choices: [],
       dice: "-",
