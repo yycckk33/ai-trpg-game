@@ -5,6 +5,30 @@ if (!sessionId) {
   localStorage.setItem("trpgSessionId", sessionId);
 }
 
+function getInputValue(id, fallback) {
+  const element = document.getElementById(id);
+
+  if (!element) {
+    return fallback;
+  }
+
+  const value = element.value.trim();
+  return value || fallback;
+}
+
+function showError(error) {
+  const story = document.getElementById("story");
+
+  if (story) {
+    story.textContent =
+      "에러 발생:\n" +
+      (error && error.message ? error.message : String(error)) +
+      "\n\n브라우저 콘솔도 확인해줘.";
+  }
+
+  console.error(error);
+}
+
 function updateStatus(state) {
   if (!state) return;
 
@@ -48,7 +72,8 @@ function updateInventory(state) {
   if (
     state.ended ||
     (state.combat && state.combat.active) ||
-    (state.shop && state.shop.active)
+    (state.shop && state.shop.active) ||
+    (state.inn && state.inn.active)
   ) {
     return;
   }
@@ -131,13 +156,8 @@ function renderChoices(state, choices) {
 
   if (!choices || choices.length === 0) return;
 
-  if (state && state.shop && state.shop.active) {
-    return;
-  }
-
-  if (state && state.ended) {
-    return;
-  }
+  if (state && state.shop && state.shop.active) return;
+  if (state && state.ended) return;
 
   choices.forEach((choice) => {
     const button = document.createElement("button");
@@ -157,97 +177,114 @@ function updateAll(data) {
   renderChoices(state, data.choices || []);
 }
 
-async function startGame() {
-  const playerName =
-    document.getElementById("nameInput").value.trim() || "이름 없는 자";
-
-  const playerJob =
-    document.getElementById("jobInput").value.trim() || "모험가";
-
-  const worldSetting =
-    document.getElementById("worldInput").value.trim() ||
-    "이곳은 흔히 아는 몬스터가 나타나는 판타지 RPG의 세계이며, 당신은 중대한 목표를 가지고 있습니다.";
-
-  const playerPersonality =
-    document.getElementById("personalityInput").value.trim() ||
-    "특별히 정해지지 않은 성격";
-
-  const playerGoal =
-    document.getElementById("goalInput").value.trim() ||
-    "아직 정하지 못한 중대한 목표";
-
-  const response = await fetch("/start", {
+async function postJson(url, body) {
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
+    body: JSON.stringify(body)
+  });
+
+  const text = await response.text();
+
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`${url} 응답이 JSON 형식이 아님:\n${text}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(data.text || data.message || `${url} 요청 실패`);
+  }
+
+  return data;
+}
+
+async function startGame() {
+  try {
+    const playerName = getInputValue("nameInput", "이름 없는 자");
+    const playerJob = getInputValue("jobInput", "모험가");
+
+    const worldSetting = getInputValue(
+      "worldInput",
+      "이곳은 흔히 아는 몬스터가 나타나는 판타지 RPG의 세계이며, 당신은 중대한 목표를 가지고 있습니다."
+    );
+
+    const playerPersonality = getInputValue(
+      "personalityInput",
+      "특별히 정해지지 않은 성격"
+    );
+
+    const playerGoal = getInputValue(
+      "goalInput",
+      "아직 정하지 못한 중대한 목표"
+    );
+
+    const data = await postJson("/start", {
       sessionId,
       playerName,
       playerJob,
       worldSetting,
       playerPersonality,
       playerGoal
-    })
-  });
+    });
 
-  const data = await response.json();
+    document.getElementById("startScreen").style.display = "none";
+    document.getElementById("gameScreen").style.display = "block";
 
-  document.getElementById("startScreen").style.display = "none";
-  document.getElementById("gameScreen").style.display = "block";
+    updateStatus(data.state);
+    updateInventory(data.state);
+    updateCombat(data.state);
+    updateShop(data.state);
 
-  updateStatus(data.state);
-  updateInventory(data.state);
-  updateCombat(data.state);
-  updateShop(data.state);
-
-  await sendChoice("게임 시작");
+    await sendChoice("게임 시작");
+  } catch (error) {
+    document.getElementById("startScreen").style.display = "none";
+    document.getElementById("gameScreen").style.display = "block";
+    showError(error);
+  }
 }
 
 async function sendChoice(choiceText) {
-  const input = document.getElementById("choiceInput");
-  const story = document.getElementById("story");
-  const turnBox = document.getElementById("turn");
-  const diceBox = document.getElementById("dice");
+  try {
+    const input = document.getElementById("choiceInput");
+    const story = document.getElementById("story");
+    const turnBox = document.getElementById("turn");
+    const diceBox = document.getElementById("dice");
 
-  const choice = choiceText || input.value.trim() || "주변을 살핀다";
+    const choice = choiceText || input.value.trim() || "주변을 살핀다";
 
-  story.textContent = "진행 중...";
+    story.textContent = "진행 중...";
 
-  const response = await fetch("/next", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
+    const data = await postJson("/next", {
       sessionId,
       choice
-    })
-  });
+    });
 
-  const data = await response.json();
+    story.textContent = data.text || "응답 없음";
+    turnBox.textContent = "턴: " + (data.turn ?? 1);
+    diceBox.textContent = "주사위: " + (data.dice ?? "-");
 
-  story.textContent = data.text || "응답 없음";
-  turnBox.textContent = "턴: " + (data.turn ?? 1);
-  diceBox.textContent = "주사위: " + (data.dice ?? "-");
+    updateAll(data);
 
-  updateAll(data);
-
-  input.value = "";
+    input.value = "";
+  } catch (error) {
+    showError(error);
+  }
 }
 
 async function resetGame() {
-  await fetch("/reset", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
+  try {
+    await postJson("/reset", {
       sessionId
-    })
-  });
+    });
 
-  location.reload();
+    location.reload();
+  } catch (error) {
+    showError(error);
+  }
 }
 
 function newPlayerSession() {
