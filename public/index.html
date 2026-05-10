@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>AI TRPG</title>
+
+  <style>
+    body {
+      max-width: 1000px;
+      margin: 30px auto;
+      font-family: sans-serif;
+      line-height: 1.7;
+      padding: 20px;
+    }
+
+    #gameScreen {
+      display: none;
+    }
+
+    #playerInfo,
+    #turn,
+    #dice {
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+
+    #story {
+      white-space: pre-wrap;
+      word-break: keep-all;
+      border: 1px solid #aaa;
+      padding: 20px;
+      min-height: 260px;
+      background: #f8f8f8;
+    }
+
+    #combatBox,
+    #shopBox,
+    #inventoryBox {
+      display: none;
+      padding: 16px;
+      margin: 20px 0;
+    }
+
+    #combatBox {
+      border: 2px solid #b00000;
+      background: #fff0f0;
+    }
+
+    #shopBox {
+      border: 2px solid #8a6500;
+      background: #fff8df;
+    }
+
+    #inventoryBox {
+      display: block;
+      border: 1px solid #777;
+      background: #f3f3f3;
+    }
+
+    #choiceButtons button,
+    #shopButtons button,
+    #itemButtons button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      margin: 8px 0;
+      padding: 12px;
+      font-size: 16px;
+    }
+
+    input {
+      width: 300px;
+      padding: 10px;
+      font-size: 16px;
+    }
+
+    button {
+      padding: 10px 14px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="startScreen">
+    <h1>AI TRPG</h1>
+
+    <input id="nameInput" placeholder="플레이어 이름">
+    <br><br>
+
+    <input id="jobInput" placeholder="직업 입력">
+    <br><br>
+
+    <button onclick="startGame()">게임 시작</button>
+  </div>
+
+  <div id="gameScreen">
+    <h1>AI TRPG</h1>
+
+    <div id="playerInfo"></div>
+    <div id="turn">턴: 1</div>
+    <div id="dice">주사위: -</div>
+
+    <div id="inventoryBox">
+      <h2>인벤토리</h2>
+      <div id="inventoryInfo"></div>
+      <div id="itemButtons"></div>
+    </div>
+
+    <pre id="story">게임 시작</pre>
+
+    <div id="combatBox">
+      <h2>전투 중</h2>
+      <div id="combatInfo"></div>
+    </div>
+
+    <div id="shopBox">
+      <h2>상점</h2>
+      <div id="shopInfo"></div>
+      <div id="shopButtons"></div>
+    </div>
+
+    <input id="choiceInput" placeholder="직접 행동 입력">
+    <button onclick="sendChoice()">진행</button>
+    <button onclick="resetGame()">새 게임</button>
+
+    <div id="choiceButtons"></div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
