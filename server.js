@@ -33,8 +33,11 @@ const gameStates = {};
 function createNewGameState() {
   return {
     playerName: "",
-    playerJob: "",
-    turn: 1,
+playerJob: "",
+worldSetting: "이곳은 흔히 아는 몬스터가 나타나는 판타지 RPG의 세계이며, 당신은 중대한 목표를 가지고 있습니다.",
+playerPersonality: "특별히 정해지지 않은 성격",
+playerGoal: "아직 정하지 못한 중대한 목표",
+turn: 1,
     maxTurn: 50,
 
     hp: 30,
@@ -71,18 +74,26 @@ function createNewGameState() {
     ],
 
     shop: {
-      active: false,
-      items: []
-    },
+  active: false,
+  items: []
+},
 
-    pendingGoldUses: [],
+inn: {
+  active: false,
+  price: 12
+},
+
+pendingGoldUses: [],
 
     history: [],
     lastScene: "",
-    lastChoices: [],
+lastChoices: [],
 
-    ended: false,
+lastIntent: "",
+sameIntentCount: 0,
+sceneStallCount: 0,
 
+ended: false,
     combat: {
       active: false,
       monsterName: "",
@@ -890,7 +901,149 @@ async function handleCombat(gameState, choice) {
     state: gameState
   };
 }
+function getActionIntent(choice) {
+  const text = String(choice || "");
 
+  if (
+    text.includes("떠나") ||
+    text.includes("벗어나") ||
+    text.includes("도망") ||
+    text.includes("이동") ||
+    text.includes("나간") ||
+    text.includes("빠져나")
+  ) {
+    return "leave";
+  }
+
+  if (
+    text.includes("공격") ||
+    text.includes("죽") ||
+    text.includes("처치") ||
+    text.includes("베") ||
+    text.includes("찌르") ||
+    text.includes("일격") ||
+    text.includes("불태우") ||
+    text.includes("싸운")
+  ) {
+    return "attack";
+  }
+
+  if (
+    text.includes("훔치") ||
+    text.includes("뺏") ||
+    text.includes("빼앗") ||
+    text.includes("강탈") ||
+    text.includes("털")
+  ) {
+    return "steal";
+  }
+
+  if (
+    text.includes("설득") ||
+    text.includes("말") ||
+    text.includes("대화") ||
+    text.includes("협상") ||
+    text.includes("사과")
+  ) {
+    return "talk";
+  }
+
+  if (
+    text.includes("마법") ||
+    text.includes("주문") ||
+    text.includes("재우") ||
+    text.includes("불") ||
+    text.includes("환각")
+  ) {
+    return "magic";
+  }
+
+  return "other";
+}
+
+function buildAntiLoopDirective(gameState, playerChoice) {
+  const currentIntent = getActionIntent(playerChoice);
+
+  if (gameState.lastIntent === currentIntent) {
+    gameState.sameIntentCount += 1;
+  } else {
+    gameState.sameIntentCount = 0;
+  }
+
+  gameState.lastIntent = currentIntent;
+
+  if (gameState.sameIntentCount >= 2) {
+    return `
+반복 방지 지시:
+- 플레이어가 같은 의도의 행동을 여러 번 반복하고 있다.
+- 이번 턴에는 반드시 이 행동의 결과를 확정한다.
+- 도망치거나 떠나려는 행동이면 성공 또는 실패를 명확히 판정하고, 실패해도 같은 자리에서 무한히 붙잡아두지 않는다.
+- 공격하거나 처치하려는 행동이면 죽음, 부상, 항복, 도주, 전투 전환 중 하나로 상황을 확정한다.
+- 훔치거나 빼앗으려는 행동이면 성공, 실패, 발각, 추격, 전투 전환 중 하나로 상황을 확정한다.
+- “사람들이 싸운다”, “상황이 혼란스럽다”, “무엇을 할까”처럼 결론 없는 문장으로 끝내지 않는다.
+- 같은 갈등을 다음 턴으로 그대로 미루지 않는다.
+`;
+  }
+
+  return "";
+}
+
+async function rewriteStalledScene(gameState, playerChoice, aiText) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 RPG 장면 반복을 해결하는 편집자다. 반드시 기존 장면을 결론이 나도록 다시 쓴다."
+        },
+        {
+          role: "user",
+          content: `
+아래 장면은 같은 상황이 반복되고 있다.
+플레이어 행동을 존중해서 이번 장면 안에서 반드시 상황을 진전 또는 종료시켜라.
+
+플레이어:
+이름: ${gameState.playerName}
+직업: ${gameState.playerJob}
+성격: ${gameState.playerPersonality}
+목표: ${gameState.playerGoal}
+
+플레이어 행동:
+${playerChoice}
+
+반복된 장면:
+${aiText}
+
+수정 규칙:
+- 같은 장소, 같은 시비, 같은 싸움, 같은 대치 상태를 그대로 유지하지 않는다.
+- 플레이어가 벗어나려 했다면 벗어나거나, 실패해도 새로운 장소/추격/전투/대가로 넘어간다.
+- 플레이어가 적을 처치하려 했다면 적이 죽거나, 크게 다치거나, 도망치거나, 전투 UI로 넘어갈 만큼 명확한 교전이 시작되어야 한다.
+- 플레이어가 강한 공격을 선언했다면 “대충 싸움이 이어졌다”로 넘기지 않는다.
+- 결과가 성공이든 실패든 반드시 확정한다.
+- 선택지는 3개만 만든다.
+- 전투가 필요하면 마지막 줄에 [전투발생:전투대상이름]을 붙인다.
+- 골드나 아이템 변화가 있으면 기존 태그 형식을 사용한다.
+
+출력 형식:
+
+설명:
+(수정된 설명)
+
+선택지:
+1. (선택지)
+2. (선택지)
+3. (선택지)
+`
+        }
+      ]
+    });
+
+    return response.choices[0].message.content;
+  } catch {
+    return aiText;
+  }
+}
 async function judgeCombatScene(aiText, playerChoice) {
   try {
     const response = await openai.chat.completions.create({
@@ -948,7 +1101,194 @@ ${aiText}
     };
   }
 }
+function ensureInn(gameState) {
+  if (!gameState.inn) {
+    gameState.inn = {
+      active: false,
+      price: 12
+    };
+  }
 
+  return gameState.inn;
+}
+
+function recoverAtInn(gameState) {
+  gameState.hp = gameState.maxHp;
+  gameState.mp = gameState.maxMp;
+
+  if (Array.isArray(gameState.party)) {
+    gameState.party = gameState.party.map((member) => ({
+      ...member,
+      hp: member.maxHp ?? member.hp,
+      mp: member.maxMp ?? member.mp
+    }));
+  }
+}
+
+function applyInnTheft(gameState) {
+  const messages = [];
+  const theftHappened = Math.random() < 0.12;
+
+  if (!theftHappened) {
+    return messages;
+  }
+
+  const goldLoss = Math.min(
+    gameState.gold,
+    5 + Math.floor(Math.random() * 16)
+  );
+
+  if (goldLoss > 0) {
+    gameState.gold -= goldLoss;
+    messages.push(`자는 사이 도둑에게 ${goldLoss}골드를 빼앗긴 것 같다.`);
+  }
+
+  const stealableItems = gameState.inventory.filter((item) => item.amount > 0);
+
+  if (stealableItems.length > 0 && Math.random() < 0.6) {
+    const targetItem =
+      stealableItems[Math.floor(Math.random() * stealableItems.length)];
+
+    removeItemByName(gameState, targetItem.name);
+    messages.push(`자는 사이 ${targetItem.name}을 잃어버린 것 같다.`);
+  }
+
+  if (messages.length === 0) {
+    messages.push("자는 사이 누군가 짐을 뒤진 흔적이 남았지만, 잃어버린 것은 없었다.");
+  }
+
+  return messages;
+}
+
+function openInn(gameState) {
+  const inn = ensureInn(gameState);
+
+  inn.active = true;
+  gameState.shop.active = false;
+
+  return {
+    text:
+      "설명:\n" +
+      `여관에 도착했다. 하룻밤 숙박비는 ${inn.price}골드다.\n` +
+      "잠을 자면 자신과 일행의 HP와 MP가 모두 회복된다.",
+    choices: [
+      `하룻밤 숙박한다 (${inn.price}골드)`,
+      "여관 주인에게 소문을 묻는다",
+      "여관 나가기"
+    ],
+    dice: "-",
+    turn: gameState.turn,
+    state: gameState
+  };
+}
+
+function handleInn(gameState, choice) {
+  const inn = ensureInn(gameState);
+
+  if (
+    choice.includes("여관 나가기") ||
+    choice.includes("나간다") ||
+    choice.includes("떠난다")
+  ) {
+    inn.active = false;
+
+    return {
+      text: "설명:\n여관에서 나왔다.",
+      choices: ["주변을 살핀다", "길을 떠난다", "상점을 찾는다"],
+      dice: "-",
+      turn: gameState.turn,
+      state: gameState
+    };
+  }
+
+  if (
+    choice.includes("소문") ||
+    choice.includes("정보") ||
+    choice.includes("묻는다")
+  ) {
+    return {
+      text:
+        "설명:\n" +
+        "여관 주인은 잔을 닦으며 주변에서 들은 이야기를 몇 가지 흘렸다.\n" +
+        "최근 밤길에 도둑이 늘었고, 몬스터 때문에 마을 밖 의뢰값도 조금 오른 모양이다.",
+      choices: [
+        `하룻밤 숙박한다 (${inn.price}골드)`,
+        "여관 나가기",
+        "더 자세히 묻는다"
+      ],
+      dice: "-",
+      turn: gameState.turn,
+      state: gameState
+    };
+  }
+
+  const wantsRest =
+    choice.includes("숙박") ||
+    choice.includes("잔다") ||
+    choice.includes("잠") ||
+    choice.includes("쉰다") ||
+    choice.includes("방을 빌");
+
+  if (!wantsRest) {
+    return {
+      text: "설명:\n여관에서는 숙박하거나, 소문을 묻거나, 밖으로 나갈 수 있다.",
+      choices: [
+        `하룻밤 숙박한다 (${inn.price}골드)`,
+        "여관 주인에게 소문을 묻는다",
+        "여관 나가기"
+      ],
+      dice: "-",
+      turn: gameState.turn,
+      state: gameState
+    };
+  }
+
+  if (gameState.gold < inn.price) {
+    return {
+      text:
+        "설명:\n" +
+        `골드가 부족하다. 숙박하려면 ${inn.price}골드가 필요하다.\n` +
+        `현재 보유 골드: ${gameState.gold}`,
+      choices: [
+        "일거리를 찾는다",
+        "여관 주인에게 외상을 부탁한다",
+        "여관 나가기"
+      ],
+      dice: "-",
+      turn: gameState.turn,
+      state: gameState
+    };
+  }
+
+  gameState.gold -= inn.price;
+  recoverAtInn(gameState);
+
+  const theftMessages = applyInnTheft(gameState);
+  inn.active = false;
+
+  let text =
+    "설명:\n" +
+    `${gameState.playerName}은 ${inn.price}골드를 내고 여관방에서 하룻밤을 보냈다.\n` +
+    "몸의 피로가 풀리고, 흐려졌던 정신도 맑아졌다.\n" +
+    "자신과 일행의 HP와 MP가 모두 회복되었다.\n\n" +
+    "상태 변화:\n" +
+    "- HP가 모두 회복되었다.\n" +
+    "- MP가 모두 회복되었다.";
+
+  if (theftMessages.length > 0) {
+    text +=
+      "\n\n사건:\n" +
+      theftMessages.map((message) => `- ${message}`).join("\n");
+  }
+
+  return {
+    text,
+    choices: ["아침 식사를 한다", "여관을 나선다", "주변 소문을 확인한다"],
+    dice: "-",
+    turn: gameState.turn,
+    state: gameState
+  };
+}
 function handleGoldUse(gameState, choice) {
   const goldUse = gameState.pendingGoldUses.find((use) =>
     choice.includes(use.name)
@@ -980,7 +1320,70 @@ function handleGoldUse(gameState, choice) {
     state: gameState
   };
 }
+function handlePaymentClaim(gameState, choice) {
+  const text = String(choice || "");
+  const recentContext = [
+    gameState.lastScene || "",
+    ...(gameState.history || []).slice(-5)
+  ].join("\n");
 
+  const wantsPayment =
+    text.includes("보수") ||
+    text.includes("임금") ||
+    text.includes("일당") ||
+    text.includes("대금") ||
+    text.includes("월급") ||
+    text.includes("돈을 받") ||
+    text.includes("골드를 받") ||
+    text.includes("보상을 받") ||
+    text.includes("급료");
+
+  if (!wantsPayment) {
+    return null;
+  }
+
+  const hasWorkContext =
+    recentContext.includes("알바") ||
+    recentContext.includes("일을") ||
+    recentContext.includes("일했다") ||
+    recentContext.includes("일을 끝") ||
+    recentContext.includes("의뢰") ||
+    recentContext.includes("퀘스트") ||
+    recentContext.includes("고용") ||
+    recentContext.includes("심부름") ||
+    recentContext.includes("노동") ||
+    recentContext.includes("보수") ||
+    recentContext.includes("임금") ||
+    recentContext.includes("일당");
+
+  if (!hasWorkContext) {
+    return null;
+  }
+
+  const basePay = 12;
+  const bonus = Math.floor(Math.random() * 9);
+  const pay = basePay + bonus;
+
+  gameState.gold += pay;
+
+  return {
+    text:
+      "설명:\n" +
+      `${gameState.playerName}은 더 이상 말을 돌리지 않고, 끝낸 일에 대한 보수를 요구했다.\n` +
+      `상대는 잠시 버티려 했지만 이미 일이 끝난 뒤였다.\n` +
+      `결국 약속된 보수로 ${pay}골드를 지급했다.\n\n` +
+      "획득/변동:\n" +
+      `- 일의 보수로 ${pay}골드를 얻었다.`,
+    choices: [
+      "받은 골드를 확인한다",
+      "다음 장소로 이동한다",
+      "추가로 일거리를 묻는다"
+    ],
+    dice: "-",
+    turn: gameState.turn,
+    state: gameState
+  };
+}
 function parseGoldUses(gameState, aiText) {
   const matches = [...aiText.matchAll(/\[골드사용:(.+?):(\d+):(.+?)\]/g)];
 
@@ -1201,15 +1604,163 @@ ${aiText}
     };
   }
 }
+function applyStoryStateData(gameState, stateData) {
+  const messages = [];
 
+  const hpChange = clampNumber(stateData.hpChange, -50, 50, 0);
+  const mpChange = clampNumber(stateData.mpChange, -50, 50, 0);
+
+  if (hpChange > 0) {
+    const before = gameState.hp;
+    gameState.hp = Math.min(gameState.maxHp, gameState.hp + hpChange);
+    const actualHeal = gameState.hp - before;
+
+    if (actualHeal > 0) {
+      messages.push(`${stateData.hpReason || "회복"}으로 HP가 ${actualHeal} 회복되었다.`);
+    }
+  }
+
+  if (hpChange < 0) {
+    const damage = Math.min(gameState.hp, Math.abs(hpChange));
+    gameState.hp -= damage;
+
+    if (damage > 0) {
+      messages.push(`${stateData.hpReason || "피해"}으로 HP가 ${damage} 감소했다.`);
+    }
+
+    if (gameState.hp <= 0) {
+      gameState.hp = 0;
+      gameState.ended = true;
+      messages.push("HP가 0이 되어 모험을 계속할 수 없게 되었다.");
+    }
+  }
+
+  if (mpChange > 0) {
+    const before = gameState.mp;
+    gameState.mp = Math.min(gameState.maxMp, gameState.mp + mpChange);
+    const actualRecovery = gameState.mp - before;
+
+    if (actualRecovery > 0) {
+      messages.push(`${stateData.mpReason || "마력 회복"}으로 MP가 ${actualRecovery} 회복되었다.`);
+    }
+  }
+
+  if (mpChange < 0) {
+    const cost = Math.min(gameState.mp, Math.abs(mpChange));
+    gameState.mp -= cost;
+
+    if (cost > 0) {
+      messages.push(`${stateData.mpReason || "마법 사용"}으로 MP가 ${cost} 소모되었다.`);
+    }
+
+    if (cost < Math.abs(mpChange)) {
+      messages.push("필요한 MP보다 보유 MP가 부족해, 남은 MP를 전부 소모했다.");
+    }
+  }
+
+  return messages;
+}
+
+async function judgeStoryStateChanges(gameState, playerChoice, aiText) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 중세 판타지 RPG 상태 변화 판정기다. 반드시 JSON만 출력한다."
+        },
+        {
+          role: "user",
+          content: `
+아래 내용을 보고 일반 스토리 진행 중 플레이어의 HP 또는 MP가 실제로 변해야 하는지 판정해라.
+
+플레이어 상태:
+이름: ${gameState.playerName}
+직업: ${gameState.playerJob}
+HP: ${gameState.hp}/${gameState.maxHp}
+MP: ${gameState.mp}/${gameState.maxMp}
+공격 보정: ${gameState.attackBonus}
+회복 보정: ${gameState.healBonus}
+방어 보정: ${gameState.defenseBonus}
+마법 보정: ${gameState.magicBonus}
+
+플레이어 행동:
+${playerChoice}
+
+진행된 장면:
+${aiText}
+
+판정 규칙:
+- 플레이어가 전투가 아닌 일반 장면에서 마법을 사용했다면 MP를 소모시킨다.
+- 예: 사람을 재움, 불을 피움, 문을 마법으로 엶, 환각을 만듦, 치료 마법 사용, 물건을 띄움.
+- 단순 대화, 걷기, 관찰, 돈 거래, 훔치기만으로는 MP를 소모하지 않는다.
+- 마법이 아니라 손기술, 협박, 은신, 도구 사용이면 MP를 소모하지 않는다.
+- 신체적으로 다치거나 맞거나 넘어지거나 독을 마셨다면 HP를 감소시킨다.
+- 치료 마법을 사용했다면 HP는 회복될 수 있지만 MP는 반드시 감소해야 한다.
+- 휴식, 식사, 치료를 명확히 받았다면 HP를 회복할 수 있다.
+- 마나 포션이나 명확한 마력 회복 수단이 없으면 MP는 회복하지 않는다.
+- 이미 전투 수치가 처리되는 전투 장면이면 여기서는 HP/MP 변화를 만들지 않는다.
+- 변화가 애매하면 0으로 둔다.
+- hpChange와 mpChange는 -50부터 50 사이 숫자다.
+- 감소는 음수, 회복은 양수다.
+- JSON만 출력한다.
+
+형식:
+{
+  "hpChange": 숫자,
+  "hpReason": "짧은 이유",
+  "mpChange": 숫자,
+  "mpReason": "짧은 이유"
+}
+`
+        }
+      ]
+    });
+
+    return parseJson(response.choices[0].message.content, {
+      hpChange: 0,
+      hpReason: "",
+      mpChange: 0,
+      mpReason: ""
+    });
+  } catch {
+    return {
+      hpChange: 0,
+      hpReason: "",
+      mpChange: 0,
+      mpReason: ""
+    };
+  }
+}
 app.post("/start", async (req, res) => {
   try {
-    const { playerName, playerJob, sessionId } = req.body;
+    const {
+  playerName,
+  playerJob,
+  worldSetting,
+  playerPersonality,
+  playerGoal,
+  sessionId
+} = req.body;
 
     const gameState = resetGameState(sessionId);
 
     gameState.playerName = playerName || "이름 없는 자";
     gameState.playerJob = playerJob || "모험가";
+    gameState.worldSetting =
+  worldSetting ||
+  "이곳은 흔히 아는 몬스터가 나타나는 판타지 RPG의 세계이며, 당신은 중대한 목표를 가지고 있습니다.";
+
+gameState.playerPersonality =
+  playerPersonality ||
+  "특별히 정해지지 않은 성격";
+
+gameState.playerGoal =
+  playerGoal ||
+  "아직 정하지 못한 중대한 목표";
+
+  
 
     const jobStats = await generateJobStats(gameState.playerJob);
 
@@ -1319,6 +1870,12 @@ app.post("/next", async (req, res) => {
       return res.json(handleShop(gameState, playerChoice));
     }
 
+    ensureInn(gameState);
+
+if (gameState.inn.active) {
+  return res.json(handleInn(gameState, playerChoice));
+}
+
     if (playerChoice.includes(" 사용")) {
       const result = useItem(gameState, playerChoice);
 
@@ -1354,6 +1911,34 @@ app.post("/next", async (req, res) => {
     if (wantsShop && !hostileToMerchant) {
       return res.json(await openShop(gameState));
     }
+    const wantsInn =
+  playerChoice.includes("여관") ||
+  playerChoice.includes("숙소") ||
+  playerChoice.includes("숙박") ||
+  playerChoice.includes("방을 빌");
+
+if (wantsInn) {
+  ensureInn(gameState);
+
+  const wantsDirectRest =
+    playerChoice.includes("숙박") ||
+    playerChoice.includes("잔다") ||
+    playerChoice.includes("잠") ||
+    playerChoice.includes("쉰다") ||
+    playerChoice.includes("방을 빌");
+
+  if (wantsDirectRest) {
+    gameState.inn.active = true;
+    return res.json(handleInn(gameState, "하룻밤 숙박한다"));
+  }
+
+  return res.json(openInn(gameState));
+}
+
+    const paymentClaimResult = handlePaymentClaim(gameState, playerChoice);
+if (paymentClaimResult) {
+  return res.json(paymentClaimResult);
+}
 
     const goldUseResult = handleGoldUse(gameState, playerChoice);
     if (goldUseResult) {
@@ -1386,10 +1971,13 @@ ${dice}
       gameState.turn <= 25 ? "승" :
       gameState.turn <= 40 ? "전" :
       "결";
+      const antiLoopDirective = buildAntiLoopDirective(gameState, playerChoice);
 
     const prompt = `
 세계관:
-- 중세 판타지 RPG
+${gameState.worldSetting}
+
+기본 규칙:
 - 현대 무기 없음
 - 부활 없음
 - 죽음은 되돌릴 수 없음
@@ -1406,6 +1994,8 @@ ${storyPhase}
 플레이어:
 이름: ${gameState.playerName}
 직업: ${gameState.playerJob}
+성격: ${gameState.playerPersonality}
+중대한 목표: ${gameState.playerGoal}
 HP: ${gameState.hp}/${gameState.maxHp}
 MP: ${gameState.mp}/${gameState.maxMp}
 골드: ${gameState.gold}
@@ -1421,6 +2011,8 @@ ${playerChoice}
 ${gameState.lastScene || "게임 시작"}
 
 ${diceText}
+
+${antiLoopDirective}
 
 규칙:
 - 플레이어 선택을 최우선으로 따른다.
@@ -1443,8 +2035,33 @@ ${diceText}
 - 실제 물리적 전투가 시작되는 장면이라면 마지막 줄에 [전투발생:전투대상이름]을 출력할 수 있다.
 - 전투 수치 계산은 코드가 하므로 AI는 전투 데미지와 HP 계산을 하지 않는다.
 - 일반 장면에서는 주사위를 언급하지 않는다.
+- 플레이어가 일반 장면에서 마법을 사용하면 장면에 그 마법 사용이 드러나게 작성한다. MP 소모 수치 계산은 서버가 따로 처리한다.
 - 50턴이 되기 전에는 엔딩을 내지 않는다.
 - 50턴에서는 선택지를 만들지 말고 최종 엔딩 지문만 작성한다.
+- 플레이어의 중대한 목표를 장기 목표로 삼고, 장면은 그 목표와 조금씩 연결되게 진행한다.
+- 단, 매 턴 억지로 목표를 강요하지 말고 자연스럽게 기회, 방해물, 단서, 유혹, 대가를 배치한다.
+- 플레이어의 성격은 행동 방식과 주변 반응에 반영한다.
+- 온순하고 착한 성격이면 갈등 상황에서 망설임, 양보, 설득, 손해 감수가 자연스럽게 드러날 수 있다.
+- 뻔뻔하거나 잔혹하거나 사이코패스적인 성격이면 공격적 행동, 무감각한 반응, 죄책감 없는 선택지가 자연스럽게 드러날 수 있다.
+- 플레이어가 직접 고른 성격을 임의로 착하게 교정하지 않는다.
+- 플레이어가 직접 한 행동을 도덕적으로 순화해서 반대 행동으로 바꾸지 않는다.
+- 성격은 행동을 막는 족쇄가 아니라, 같은 행동을 어떤 태도로 하는지 결정하는 기준이다.
+- 같은 장소, 같은 시비, 같은 대치, 같은 싸움을 2턴 이상 반복하지 않는다.
+- 플레이어가 떠나려 하면 성공하거나, 실패하더라도 추격/새 장소/전투/대가 중 하나로 장면을 변화시킨다.
+- 플레이어가 적을 처치하려 하면 죽음, 부상, 항복, 도주, 전투 발생 중 하나로 결과를 확정한다.
+- “싸움이 이어졌다”, “사람들이 혼란스러워했다”, “이제 무엇을 할까”만으로 장면을 끝내지 않는다.
+- 강한 공격, 일격, 처형, 도주, 탈출, 강탈 같은 결정적 행동은 반드시 성공/실패/대가를 확정한다.
+- 모든 선택지를 유료 선택지나 상점 아이템 요구로만 만들지 않는다.
+- 유료 해결책이 있더라도 무료 해결책, 위험한 해결책, 우회 해결책 중 하나는 반드시 남긴다.
+- 플레이어가 일을 끝냈고 보수를 요구하면 보수 지급, 거절, 사기, 협박, 전투 중 하나로 즉시 결론낸다.
+- 보수 지급 장면을 2턴 이상 미루지 않는다.
+- 플레이어가 “보수를 받는다”, “임금을 받는다”, “일당을 받는다”처럼 명확히 요구하면 장면 안에서 지급 여부를 확정한다.
+- 마을 사람이나 NPC가 아무 대가 없이 플레이어의 노동만 가져가고 같은 상황을 반복하지 않는다.
+- 마을이나 도시에는 여관이 있을 수 있다.
+- 플레이어가 여관이나 숙소를 찾으면 여관 이용 선택지를 제공할 수 있다.
+- 여관에서 돈을 내고 자면 HP와 MP가 모두 회복된다.
+- 여관 숙박 중에는 낮은 확률로 도둑에게 골드나 아이템을 잃을 수 있다.
+- 여관 숙박비 계산과 회복 처리는 서버가 담당한다.
 
 출력 형식:
 
@@ -1473,7 +2090,12 @@ ${diceText}
 
     let aiText = response.choices[0].message.content;
 
-    aiText = parseGoldUses(gameState, aiText);
+if (gameState.sameIntentCount >= 3) {
+  aiText = await rewriteStalledScene(gameState, playerChoice, aiText);
+  gameState.sameIntentCount = 0;
+}
+
+aiText = parseGoldUses(gameState, aiText);
 
     const storyRewardResult = applyStoryRewards(gameState, aiText);
 aiText = storyRewardResult.text;
@@ -1490,7 +2112,26 @@ if (rewardMessages.length > 0) {
     "\n\n획득/변동:\n" +
     rewardMessages.map((message) => `- ${message}`).join("\n");
 }
+    const judgedStateChange = await judgeStoryStateChanges(gameState, playerChoice, aiText);
+    const stateMessages = applyStoryStateData(gameState, judgedStateChange);
 
+    if (stateMessages.length > 0) {
+      aiText +=
+        "\n\n상태 변화:\n" +
+        stateMessages.map((message) => `- ${message}`).join("\n");
+    }
+
+    if (gameState.ended) {
+      return res.json({
+        text:
+          aiText +
+          "\n\n엔딩:\n무리한 행동의 대가로 모험은 여기서 끝났다.",
+        choices: [],
+        dice: "-",
+        turn: gameState.turn,
+        state: gameState
+      });
+    }
     const explicitCombatMatch = aiText.match(/\[전투발생:(.+?)\]/);
     let combatJudgement = { combat: false, target: "" };
 

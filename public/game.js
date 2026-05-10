@@ -1,20 +1,21 @@
-function getSessionId() {
-  let sessionId = localStorage.getItem("trpgSessionId");
+let sessionId = localStorage.getItem("trpgSessionId");
 
-  if (!sessionId) {
-    sessionId = crypto.randomUUID();
-    localStorage.setItem("trpgSessionId", sessionId);
-  }
-
-  return sessionId;
+if (!sessionId) {
+  sessionId = crypto.randomUUID();
+  localStorage.setItem("trpgSessionId", sessionId);
 }
 
 function updateStatus(state) {
   if (!state) return;
 
+  const personality = state.playerPersonality || "미정";
+  const goal = state.playerGoal || "미정";
+
   document.getElementById("playerInfo").innerHTML =
-    `이름: ${state.playerName}<br>` +
-    `직업: ${state.playerJob}<br>` +
+    `이름: ${state.playerName || "이름 없는 자"}<br>` +
+    `직업: ${state.playerJob || "모험가"}<br>` +
+    `성격: ${personality}<br>` +
+    `목표: ${goal}<br>` +
     `HP: ${state.hp}/${state.maxHp}<br>` +
     `MP: ${state.mp}/${state.maxMp}<br>` +
     `공격 보정: +${state.attackBonus}<br>` +
@@ -25,24 +26,24 @@ function updateStatus(state) {
 }
 
 function updateInventory(state) {
-  const inventoryInfo = document.getElementById("inventoryInfo");
-  const itemButtons = document.getElementById("itemButtons");
+  const info = document.getElementById("inventoryInfo");
+  const buttons = document.getElementById("inventoryButtons");
 
   if (!state || !state.inventory || state.inventory.length === 0) {
-    inventoryInfo.innerHTML = "없음";
-    itemButtons.innerHTML = "";
+    info.innerHTML = "없음";
+    buttons.innerHTML = "";
     return;
   }
 
-  inventoryInfo.innerHTML = state.inventory
+  info.innerHTML = state.inventory
     .map((item) => {
-      const desc = item.description ? ` - ${item.description}` : "";
-      const equipped = item.equipped ? " 장착됨" : "";
-      return `${item.name} x${item.amount}${equipped}${desc}`;
+      const equippedText = item.equipped ? " (장착됨)" : "";
+      const description = item.description ? ` - ${item.description}` : "";
+      return `${item.name} x${item.amount}${equippedText}${description}`;
     })
     .join("<br>");
 
-  itemButtons.innerHTML = "";
+  buttons.innerHTML = "";
 
   if (
     state.ended ||
@@ -56,7 +57,7 @@ function updateInventory(state) {
     const button = document.createElement("button");
     button.textContent = `${item.name} 사용`;
     button.onclick = () => sendChoice(`${item.name} 사용`);
-    itemButtons.appendChild(button);
+    buttons.appendChild(button);
   });
 }
 
@@ -98,9 +99,14 @@ function updateShop(state) {
     `보유 골드: ${state.gold}<br><br>` +
     items
       .map((item) => {
-        const desc = item.description ? `<br>${item.description}` : "";
-        const typeText = item.consumable ? "소모품" : "장비/영구 효과";
-        return `${item.name}: ${item.price}골드 (${typeText})${desc}`;
+        const itemType = item.consumable ? "소모품" : "장비/영구 효과";
+        const description = item.description || "설명 없음";
+
+        return (
+          `${item.name} - ${item.price}골드<br>` +
+          `종류: ${itemType}<br>` +
+          `효과: ${description}`
+        );
       })
       .join("<br><br>");
 
@@ -119,19 +125,56 @@ function updateShop(state) {
   shopButtons.appendChild(exitButton);
 }
 
-function updateAll(state) {
+function renderChoices(state, choices) {
+  const choiceButtons = document.getElementById("choiceButtons");
+  choiceButtons.innerHTML = "";
+
+  if (!choices || choices.length === 0) return;
+
+  if (state && state.shop && state.shop.active) {
+    return;
+  }
+
+  if (state && state.ended) {
+    return;
+  }
+
+  choices.forEach((choice) => {
+    const button = document.createElement("button");
+    button.textContent = choice;
+    button.onclick = () => sendChoice(choice);
+    choiceButtons.appendChild(button);
+  });
+}
+
+function updateAll(data) {
+  const state = data.state;
+
   updateStatus(state);
   updateInventory(state);
   updateCombat(state);
   updateShop(state);
+  renderChoices(state, data.choices || []);
 }
 
 async function startGame() {
   const playerName =
-    document.getElementById("nameInput").value || "이름 없는 자";
+    document.getElementById("nameInput").value.trim() || "이름 없는 자";
 
   const playerJob =
-    document.getElementById("jobInput").value || "모험가";
+    document.getElementById("jobInput").value.trim() || "모험가";
+
+  const worldSetting =
+    document.getElementById("worldInput").value.trim() ||
+    "이곳은 흔히 아는 몬스터가 나타나는 판타지 RPG의 세계이며, 당신은 중대한 목표를 가지고 있습니다.";
+
+  const playerPersonality =
+    document.getElementById("personalityInput").value.trim() ||
+    "특별히 정해지지 않은 성격";
+
+  const playerGoal =
+    document.getElementById("goalInput").value.trim() ||
+    "아직 정하지 못한 중대한 목표";
 
   const response = await fetch("/start", {
     method: "POST",
@@ -139,9 +182,12 @@ async function startGame() {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      sessionId: getSessionId(),
+      sessionId,
       playerName,
-      playerJob
+      playerJob,
+      worldSetting,
+      playerPersonality,
+      playerGoal
     })
   });
 
@@ -150,9 +196,12 @@ async function startGame() {
   document.getElementById("startScreen").style.display = "none";
   document.getElementById("gameScreen").style.display = "block";
 
-  updateAll(data.state);
+  updateStatus(data.state);
+  updateInventory(data.state);
+  updateCombat(data.state);
+  updateShop(data.state);
 
-  sendChoice("게임 시작");
+  await sendChoice("게임 시작");
 }
 
 async function sendChoice(choiceText) {
@@ -160,9 +209,8 @@ async function sendChoice(choiceText) {
   const story = document.getElementById("story");
   const turnBox = document.getElementById("turn");
   const diceBox = document.getElementById("dice");
-  const choiceButtons = document.getElementById("choiceButtons");
 
-  const choice = choiceText || input.value || "주변을 살핀다";
+  const choice = choiceText || input.value.trim() || "주변을 살핀다";
 
   story.textContent = "진행 중...";
 
@@ -172,32 +220,18 @@ async function sendChoice(choiceText) {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      sessionId: getSessionId(),
+      sessionId,
       choice
     })
   });
 
   const data = await response.json();
 
-  story.textContent = data.text;
-  turnBox.textContent = "턴: " + data.turn;
-  diceBox.textContent = "주사위: " + data.dice;
+  story.textContent = data.text || "응답 없음";
+  turnBox.textContent = "턴: " + (data.turn ?? 1);
+  diceBox.textContent = "주사위: " + (data.dice ?? "-");
 
-  updateAll(data.state);
-
-  choiceButtons.innerHTML = "";
-
-  const state = data.state;
-  const isShopOpen = state && state.shop && state.shop.active;
-
-  if (state && !isShopOpen && !state.ended) {
-    data.choices.forEach((choice) => {
-      const button = document.createElement("button");
-      button.textContent = choice;
-      button.onclick = () => sendChoice(choice);
-      choiceButtons.appendChild(button);
-    });
-  }
+  updateAll(data);
 
   input.value = "";
 }
@@ -209,7 +243,7 @@ async function resetGame() {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      sessionId: getSessionId()
+      sessionId
     })
   });
 
