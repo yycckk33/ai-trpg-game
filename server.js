@@ -1105,6 +1105,83 @@ async function handleCombat(gameState, choice) {
     state: gameState
   };
 }
+function hasDirectCombatIntent(choice) {
+  const text = String(choice || "");
+
+  const combatWords = [
+    "공격",
+    "싸움",
+    "싸운",
+    "때린",
+    "때리",
+    "죽",
+    "살해",
+    "처치",
+    "베",
+    "찌르",
+    "참수",
+    "불태우",
+    "쏜다",
+    "쏘",
+    "박살",
+    "전투",
+    "덤빈",
+    "덤벼",
+    "싸움을 건"
+  ];
+
+  const softWords = [
+    "공격할까",
+    "싸울까",
+    "죽일까",
+    "위협만",
+    "겁만",
+    "흉내",
+    "농담"
+  ];
+
+  if (softWords.some((word) => text.includes(word))) {
+    return false;
+  }
+
+  return combatWords.some((word) => text.includes(word));
+}
+
+function inferCombatTargetFromChoice(choice) {
+  const text = String(choice || "");
+
+  const targetPatterns = [
+    /(.+?)을 공격/,
+    /(.+?)를 공격/,
+    /(.+?)에게 싸움/,
+    /(.+?)와 싸/,
+    /(.+?)과 싸/,
+    /(.+?)을 때/,
+    /(.+?)를 때/,
+    /(.+?)을 죽/,
+    /(.+?)를 죽/,
+    /(.+?)을 처치/,
+    /(.+?)를 처치/
+  ];
+
+  for (const pattern of targetPatterns) {
+    const match = text.match(pattern);
+
+    if (match && match[1]) {
+      const target = match[1]
+        .replace("나는", "")
+        .replace("내가", "")
+        .replace("그", "")
+        .trim();
+
+      if (target.length >= 1 && target.length <= 20) {
+        return target;
+      }
+    }
+  }
+
+  return "상대";
+}
 function getActionIntent(choice) {
   const text = String(choice || "");
 
@@ -3152,7 +3229,11 @@ ${keywordEventDirective}
 - 플레이어 행동을 무시하거나 온건하게 바꾸지 않는다.
 - 플레이어가 직접 한 행동을 도덕적으로 순화해서 반대 행동으로 바꾸지 않는다.
 - 플레이어의 캐릭터 설정은 행동 방식, 말투, 주변 반응, 외형 묘사에 반영한다.
-- 마왕 토벌을 강요하지 않는다.
+- 캐릭터 설정은 행동의 태도, 말투, 망설임, 죄책감, 주변 반응에만 반영한다.
+- 캐릭터가 온순하거나 착하더라도, 플레이어가 직접 공격, 살해, 협박, 강탈, 방화, 도주, 배신 같은 행동을 입력하면 그 행동 자체를 취소하거나 순화하지 않는다.
+- 온순한 캐릭터가 싸움을 걸면 망설이거나 떨거나 죄책감을 느낄 수는 있지만, 플레이어가 입력한 공격 의도는 실제 사건으로 처리한다.
+- 플레이어가 명확히 싸움을 걸거나 공격을 선언하면 전투 시작, 즉시 제압, 실패, 반격, 도주, 협상 중 하나로 결과를 확정한다.
+- 플레이어가 명확히 공격했는데 “말로 타일렀다”, “조용히 물러났다”, “갈등이 흐려졌다”처럼 행동을 바꾸지 않는다.
 
 [장기 기억]
 - 장기 기억에 적힌 확정 사실, 진행 중인 사건, 완료된 사건, 인물 상태, 아이템 용도, 관계, 약속, 계약을 우선한다.
@@ -3184,7 +3265,8 @@ ${keywordEventDirective}
 - 이전 선택지의 결과가 다음 장면에서 사라지지 않게 한다.
 - 구출한 인물이 있으면 그 인물의 현재 상태, 위치, 동행 여부, 다음 목표와의 관련성을 유지한다.
 - 새 인물이 등장하면 기존 목표나 현재 사건과의 관계를 반드시 설명한다.
-- 목표와 무관한 새 사건은 1턴 이상 끌지 않는다.
+- 목표와 연결된 장기 사건은 여러 턴 이어져도 되지만, 목표와 무관한 곁가지 사건은 1턴 이상 끌지 않는다.
+- 같은 종류의 큰 사건은 이어져도 되지만, 같은 하위 상황을 2턴 연속 반복하지 않는다.
 
 [반복 방지]
 - 같은 장소, 같은 시비, 같은 대치, 같은 싸움, 같은 준비 상태를 2턴 이상 반복하지 않는다.
@@ -3192,6 +3274,8 @@ ${keywordEventDirective}
 - 플레이어가 직접 쓴 대사를 주인공이 매 턴 그대로 반복하게 하지 않는다.
 - “싸움이 이어졌다”, “상황이 이어진다”, “아직 부족하다”, “기운이 더 모였다”, “이제 무엇을 할까”만으로 장면을 끝내지 않는다.
 - 플레이어가 특정 행동을 직접 입력하면 그 행동의 결과, 반응, 대가, 단서 중 하나를 반드시 보여준다.
+- 같은 종류의 큰 사건은 이어져도 되지만, 같은 하위 상황을 2턴 연속 반복하지 않는다.
+- 장기 사건은 조사, 단서 획득, 자료 수집, 길찾기, 잡몹 처리, 협상, 함정 돌파, 중간 전투, 핵심 전투, 승리 후 정산, 휴식, 다음 목표 토론 같은 단계로 나누어 진행한다.
 
 [사건 다양화]
 - 탐험, 발견, 전투, 퀘스트, 증거 수집, 요리, 수수께끼, 구출, 관계 변화, 훈련, 대회, 거래, 추적, 라이벌, 위기, 휴식 후 사건을 섞어서 사용한다.
@@ -3340,16 +3424,21 @@ if (rewardMessages.length > 0) {
       });
     }
     const explicitCombatMatch = aiText.match(/\[전투발생:(.+?)\]/);
-    let combatJudgement = { combat: false, target: "" };
+let combatJudgement = { combat: false, target: "" };
 
-    if (explicitCombatMatch) {
-      combatJudgement = {
-        combat: true,
-        target: explicitCombatMatch[1].trim() || "적"
-      };
-    } else {
-      combatJudgement = await judgeCombatScene(aiText, playerChoice);
-    }
+if (explicitCombatMatch) {
+  combatJudgement = {
+    combat: true,
+    target: explicitCombatMatch[1].trim() || "적"
+  };
+} else if (hasDirectCombatIntent(playerChoice)) {
+  combatJudgement = {
+    combat: true,
+    target: inferCombatTargetFromChoice(playerChoice)
+  };
+} else {
+  combatJudgement = await judgeCombatScene(aiText, playerChoice);
+}
 
     if (combatJudgement.combat) {
       const monsterName = combatJudgement.target || "적";
