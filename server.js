@@ -224,6 +224,22 @@ function inventoryText(gameState) {
     })
     .join(", ");
 }
+function detailedInventoryText(gameState) {
+  if (!gameState.inventory || gameState.inventory.length === 0) {
+    return "없음";
+  }
+
+  return gameState.inventory
+    .map((item) => {
+      const equippedText = item.equipped ? " / 장착됨" : "";
+      const description = item.description
+        ? ` - ${item.description}`
+        : " - 설명 없음";
+
+      return `${item.name} x${item.amount}${equippedText}${description}`;
+    })
+    .join("\n");
+}
 function uniqueList(list, max = 12) {
   return [...new Set(
     (Array.isArray(list) ? list : [])
@@ -330,17 +346,36 @@ function removeItemByName(gameState, name) {
 }
 
 function findItemFromChoice(gameState, choice) {
-  const text = String(choice || "");
-
-  if (!text.includes("사용")) {
-    return null;
-  }
+  const text = String(choice || "").trim();
 
   const items = [...gameState.inventory].sort(
     (a, b) => String(b.name).length - String(a.name).length
   );
 
-  return items.find((item) => text.includes(item.name)) || null;
+  return items.find((item) => {
+    const name = String(item.name || "").trim();
+
+    const directCommands = [
+      `${name} 사용`,
+      `${name}을 사용`,
+      `${name}를 사용`,
+      `${name} 사용한다`,
+      `${name}을 사용한다`,
+      `${name}를 사용한다`,
+      `${name} 장착`,
+      `${name}을 장착`,
+      `${name}를 장착`,
+      `${name} 착용`,
+      `${name}을 착용`,
+      `${name}를 착용`
+    ];
+
+    return directCommands.includes(text);
+  }) || null;
+}
+
+function isDirectItemUseCommand(gameState, choice) {
+  return Boolean(findItemFromChoice(gameState, choice));
 }
 
 async function judgeItemUsageType(gameState, item) {
@@ -1062,7 +1097,7 @@ async function handleCombat(gameState, choice) {
     };
   }
 
-  if (choice.includes(" 사용")) {
+  if (isDirectItemUseCommand(gameState, choice)) {
     const result = await useItem(gameState, choice);
     text += result.text + "\n";
 
@@ -1593,6 +1628,7 @@ async function rewriteTooSimilarScene(gameState, playerChoice, aiText) {
 
 플레이어 행동:
 ${playerChoice}
+
 
 직전 장면:
 ${gameState.lastScene || "없음"}
@@ -2422,6 +2458,144 @@ ${aiText}
     return aiText;
   }
 }
+function hasExitIntent(choice) {
+  const text = String(choice || "");
+
+  return (
+    text.includes("대피") ||
+    text.includes("빠져나") ||
+    text.includes("빠져 나") ||
+    text.includes("밖으로 나") ||
+    text.includes("나간") ||
+    text.includes("떠난") ||
+    text.includes("도망") ||
+    text.includes("후퇴") ||
+    text.includes("물러나") ||
+    text.includes("벗어나") ||
+    text.includes("탈출") ||
+    text.includes("자리를 피") ||
+    text.includes("거리를 벌")
+  );
+}
+
+async function judgeExitContradiction(gameState, playerChoice, aiText) {
+  if (!hasExitIntent(playerChoice)) {
+    return {
+      contradiction: false,
+      reason: "",
+      fixInstruction: ""
+    };
+  }
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 RPG 장면이 플레이어의 이탈 행동을 무시했는지 검사하는 판정기다. 반드시 JSON만 출력한다."
+        },
+        {
+          role: "user",
+          content: `
+플레이어 행동:
+${playerChoice}
+
+이번 장면:
+${aiText}
+
+판정 규칙:
+- 플레이어가 대피, 탈출, 후퇴, 도망, 밖으로 나감, 떠남, 물러남, 벗어남을 명확히 입력했는데 장면이 같은 장소에서 연구, 의식, 대화, 조사, 전투 준비만 계속하면 contradiction은 true다.
+- 플레이어가 "알란에게 맡기고 밖으로 대피한다"처럼 맡김과 이탈을 함께 입력했으면, 물건을 맡기는 행동과 이탈 행동이 모두 반영되어야 한다.
+- 이탈이 완전히 성공하지 못해도 괜찮다. 단, 실패 이유나 대가가 명확해야 한다.
+- 이탈 실패를 쓰려면 막힘, 추격, 포위, 문 잠김, 부상, 적 등장 같은 이유를 분명히 보여준다.
+- 애매하면 false다.
+- JSON만 출력한다.
+
+형식:
+{
+  "contradiction": true 또는 false,
+  "reason": "문제 이유",
+  "fixInstruction": "수정 지시"
+}
+`
+        }
+      ]
+    });
+
+    return parseJson(response.choices[0].message.content, {
+      contradiction: false,
+      reason: "",
+      fixInstruction: ""
+    });
+  } catch {
+    return {
+      contradiction: false,
+      reason: "",
+      fixInstruction: ""
+    };
+  }
+}
+
+async function rewriteExitContradictionScene(gameState, playerChoice, aiText, exitJudge) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 플레이어의 이탈 행동을 무시한 RPG 장면을 고치는 편집자다."
+        },
+        {
+          role: "user",
+          content: `
+아래 장면은 플레이어의 대피, 이탈, 탈출, 후퇴 행동을 제대로 반영하지 못했다.
+플레이어 행동을 우선해서 다시 써라.
+
+장기 기억:
+${storyMemoryText(gameState)}
+
+플레이어 행동:
+${playerChoice}
+
+문제 이유:
+${exitJudge.reason}
+
+수정 지시:
+${exitJudge.fixInstruction}
+
+문제 장면:
+${aiText}
+
+수정 규칙:
+- 플레이어가 대피, 탈출, 후퇴, 도망, 밖으로 나감, 떠남, 물러남, 벗어남을 입력했다면 그 행동을 장면 중심에 둔다.
+- 이탈에 성공하면 새 위치, 거리 확보, 안전 여부, 추격 여부를 명확히 쓴다.
+- 이탈에 실패하면 왜 실패했는지와 대가를 명확히 쓴다.
+- 플레이어가 물건을 맡기고 대피한다고 했으면, 물건을 맡기는 행동과 대피 행동을 모두 처리한다.
+- 같은 장소에서 연구, 의식, 분석, 대화만 계속하는 장면으로 만들지 않는다.
+- 새 전투가 필요하면 마지막 줄에 [전투발생:전투대상이름]을 붙인다.
+- 골드나 아이템 변화가 있으면 기존 태그 형식을 사용한다.
+- 선택지는 반드시 3개 만든다.
+
+출력 형식:
+
+설명:
+(수정된 설명)
+
+선택지:
+1. (선택지)
+2. (선택지)
+3. (선택지)
+`
+        }
+      ]
+    });
+
+    return response.choices[0].message.content;
+  } catch {
+    return aiText;
+  }
+}
 async function judgeCombatScene(aiText, playerChoice) {
   try {
     const response = await openai.chat.completions.create({
@@ -2666,6 +2840,23 @@ function handleInn(gameState, choice) {
     turn: gameState.turn,
     state: gameState
   };
+}
+function getInlineGoldCost(choice) {
+  const text = String(choice || "");
+  const matches = [...text.matchAll(/\[골드\s*-\s*(\d+)\]/g)];
+
+  if (matches.length === 0) {
+    return 0;
+  }
+
+  return matches.reduce((sum, match) => sum + Number(match[1]), 0);
+}
+
+function removeInlineGoldCost(choice) {
+  return String(choice || "")
+    .replace(/\s*\[골드\s*-\s*\d+\]\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 function handleGoldUse(gameState, choice) {
   const goldUse = gameState.pendingGoldUses.find((use) =>
@@ -3356,7 +3547,7 @@ app.post("/next", async (req, res) => {
   try {
     const { choice, sessionId } = req.body;
     const gameState = getGameState(sessionId);
-    const playerChoice = choice || "주변을 살핀다";
+    let playerChoice = choice || "주변을 살핀다";
 
     if (playerChoice.startsWith("/dev turn ")) {
       const targetTurn = Number(playerChoice.replace("/dev turn ", ""));
@@ -3419,7 +3610,7 @@ if (gameState.inn.active) {
   return res.json(handleInn(gameState, playerChoice));
 }
 
-    if (playerChoice.includes(" 사용")) {
+    if (isDirectItemUseCommand(gameState, playerChoice)) {
   const result = await useItem(gameState, playerChoice);
 
   const previousChoices =
@@ -3484,6 +3675,41 @@ if (wantsInn) {
   }
 
   return res.json(openInn(gameState));
+}
+let inlineGoldCostTotal = 0;
+let inlineGoldPaymentMessage = "";
+let inlineGoldPaymentPrompt = "";
+
+inlineGoldCostTotal = getInlineGoldCost(playerChoice);
+
+if (inlineGoldCostTotal > 0) {
+  const cleanedChoice = removeInlineGoldCost(playerChoice);
+
+  if (gameState.gold < inlineGoldCostTotal) {
+    const previousChoices =
+      Array.isArray(gameState.lastChoices) && gameState.lastChoices.length > 0
+        ? gameState.lastChoices
+        : ["다른 방법을 찾는다", "일거리를 찾는다", "포기한다"];
+
+    return res.json({
+      text:
+        "설명:\n" +
+        `골드가 부족하다. 이 행동에는 ${inlineGoldCostTotal}골드가 필요하지만, 현재 보유 골드는 ${gameState.gold}골드다.`,
+      choices: previousChoices,
+      dice: "-",
+      turn: gameState.turn,
+      state: gameState
+    });
+  }
+
+  gameState.gold -= inlineGoldCostTotal;
+  playerChoice = cleanedChoice;
+
+  inlineGoldPaymentMessage = `비용으로 ${inlineGoldCostTotal}골드를 지불했다.`;
+  inlineGoldPaymentPrompt =
+    `이번 행동에 포함된 비용 ${inlineGoldCostTotal}골드는 이미 서버에서 차감되었다.\n` +
+    `현재 보유 골드: ${gameState.gold}\n` +
+    `같은 비용을 다시 차감하는 태그나 추가 골드 손실을 만들지 않는다.`;
 }
 
     const paymentClaimResult = handlePaymentClaim(gameState, playerChoice);
@@ -3559,6 +3785,7 @@ ${gameState.turn}/${gameState.maxTurn}
 
 플레이어 행동:
 ${playerChoice}
+${inlineGoldPaymentPrompt ? `비용 처리:\n${inlineGoldPaymentPrompt}` : ""}
 
 직전 장면:
 ${gameState.lastScene || "게임 시작"}
@@ -3582,6 +3809,9 @@ ${keywordEventDirective}
 - 플레이어가 명확히 싸움을 걸거나 공격을 선언하면 전투 시작, 즉시 제압, 실패, 반격, 도주, 협상 중 하나로 결과를 확정한다.
 - 플레이어가 직접 정한 목표와 캐릭터 설정을 임의로 다른 방향으로 바꾸지 않는다.
 - 마왕 토벌을 강요하지 않는다.
+- 플레이어가 대피, 탈출, 후퇴, 도망, 밖으로 나감, 떠남, 물러남, 벗어남을 명확히 입력하면 그 행동을 장면 중심에 둔다.
+- 이탈 행동은 같은 장소에서 연구, 의식, 분석, 대화만 계속하는 장면으로 바꾸지 않는다.
+- 이탈이 성공하면 새 위치, 거리 확보, 안전 여부, 추격 여부를 명확히 쓰고, 실패하면 막힌 이유와 대가를 명확히 쓴다.
 
 [장기 기억]
 - 장기 기억에 적힌 확정 사실, 진행 중인 사건, 완료된 사건, 인물 상태, 아이템 용도, 관계, 약속, 계약을 우선한다.
@@ -3697,6 +3927,16 @@ ${keywordEventDirective}
 - 진행용 아이템이 전달, 소모, 파괴, 봉인 해제, 문 개방에 사용되면 [아이템손실:이름] 형식을 한 줄로 추가한다.
 - 회복 아이템은 체력이나 마력을 의미 있게 회복하는 물건으로 묘사한다.
 - 회복 아이템을 보상으로 만들 때는 효과가 너무 미미한 물건처럼 묘사하지 않는다.
+- 플레이어가 인벤토리 아이템을 다른 사람에게 사용하거나, 건네거나, 먹이거나, 바르거나, 제단에 바치거나, 문에 꽂거나, 소모하는 행동을 했고 그 행동이 실제로 진행되면 반드시 [아이템손실:이름] 형식을 한 줄로 추가한다.
+- 예: 소녀에게 체력 포션을 먹였다면 [아이템손실:체력 포션]을 출력한다.
+- 예: 빛의 결정을 제단에 바쳤다면 [아이템손실:빛의 결정]을 출력한다.
+- 단, 행동이 실패했거나 실제로 아이템을 쓰지 못했다면 [아이템손실:이름]을 출력하지 않는다.
+- 새 진행용 아이템을 만들기 전에 현재 인벤토리에 있는 진행용 아이템, 단서 아이템, 문서, 수정, 열쇠, 증표, 부적, 조각, 병, 지도, 기록을 먼저 확인한다.
+- 현재 상황을 기존 아이템으로 해결하거나 진전시킬 수 있다면 새 아이템을 만들지 말고 기존 아이템을 활용한다.
+- 진행용 아이템을 얻은 뒤에는 이후 장면에서 그 아이템의 사용처, 관련 장소, 관련 인물, 해석 단서 중 하나를 자연스럽게 제공한다.
+- 사용되지 않은 진행용 아이템이 여러 개 쌓여 있으면 새로운 진행용 아이템 생성을 줄이고, 기존 아이템을 해석하거나 사용하는 사건을 우선 배치한다.
+- 같은 역할의 진행용 아이템을 반복해서 만들지 않는다. 예: 문을 여는 수정이 이미 있으면 또 다른 문 여는 결정이나 열쇠를 새로 만들지 않는다.
+- 기존 진행용 아이템이 현재 사건과 맞지 않으면 왜 아직 쓸 수 없는지, 어떤 조건이 필요한지 명확히 남긴다.
 
 [태그 형식]
 - 대괄호 태그에는 반드시 정해진 형식만 사용한다.
@@ -3806,18 +4046,53 @@ if (actionJudge.contradiction) {
     actionJudge
   );
 }
+const exitJudge = await judgeExitContradiction(
+  gameState,
+  playerChoice,
+  storyTextOnly(aiText)
+);
+
+if (exitJudge.contradiction) {
+  aiText = await rewriteExitContradictionScene(
+    gameState,
+    playerChoice,
+    aiText,
+    exitJudge
+  );
+}
 
 aiText = parseGoldUses(gameState, aiText);
+if (inlineGoldCostTotal > 0) {
+  aiText = aiText.replace(/\[골드손실:\d+:.+?\]/g, "").trim();
+}
 
-    const storyRewardResult = applyStoryRewards(gameState, aiText);
+    if (inlineGoldCostTotal > 0) {
+  aiText = aiText.replace(/\[골드손실:\d+:.+?\]/g, "").trim();
+}
+
+const storyRewardResult = applyStoryRewards(gameState, aiText);
 aiText = storyRewardResult.text;
 aiText = removeMalformedRewardTags(aiText);
 
 let rewardMessages = [...storyRewardResult.messages];
 
 if (rewardMessages.length === 0) {
-  const judgedReward = await judgeStoryRewards(gameState, playerChoice, storyTextOnly(aiText));
+  const judgedReward = await judgeStoryRewards(
+    gameState,
+    playerChoice,
+    storyTextOnly(aiText)
+  );
+
+  if (inlineGoldCostTotal > 0 && judgedReward.goldChange < 0) {
+    judgedReward.goldChange = 0;
+    judgedReward.goldReason = "";
+  }
+
   rewardMessages = applyRewardData(gameState, judgedReward);
+}
+
+if (inlineGoldPaymentMessage) {
+  rewardMessages.unshift(inlineGoldPaymentMessage);
 }
 
 if (rewardMessages.length > 0) {
