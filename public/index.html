@@ -193,6 +193,33 @@
       margin-top: 6px;
       white-space: pre-wrap;
     }
+    .log-panel {
+  display: none;
+}
+
+.log-entry {
+  border: 1px solid #ddd;
+  background: #fafafa;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+}
+
+.log-meta {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+.log-choice {
+  font-weight: bold;
+  margin-bottom: 6px;
+}
+
+.log-text {
+  white-space: pre-wrap;
+  word-break: keep-all;
+}
   </style>
 </head>
 
@@ -280,7 +307,8 @@
           <div class="input-row">
             <input id="choiceInput" placeholder="직접 행동 입력">
             <button onclick="sendChoice()">진행</button>
-            <button onclick="resetGame()">새 게임</button>
+<button onclick="toggleLog()">이전 기록</button>
+<button onclick="resetGame()">새 게임</button>
           </div>
         </div>
 
@@ -288,6 +316,13 @@
           <h2>선택지</h2>
           <div id="choiceButtons"></div>
         </div>
+        <div id="logBox" class="panel log-panel">
+  <h2>이전 기록</h2>
+  <div class="input-row">
+    <button onclick="clearStoryLog()">기록 지우기</button>
+  </div>
+  <div id="logList">기록 없음</div>
+</div>
       </div>
 
       <div class="right-column">

@@ -106,35 +106,14 @@ storyMemory: {
   goalStatus: "진행 중",
   currentObjective: "",
 
-  currentLocation: "",
-  intendedDestination: "",
-  travelRoute: [],
-  travelPurpose: "",
-
-  characters: [],
-  companions: [],
-
-  rescuedTargets: [],
-  missingTargets: [],
-
-  relationships: [],
-  romance: [],
-  marriage: [],
-  family: [],
-  children: [],
-
-  friends: [],
-  rivals: [],
-
-  quests: [],
-  promises: [],
-  training: [],
-  competitions: [],
-
-  importantFacts: [],
-  unresolvedThreads: [],
+  canonFacts: [],
+  activeThreads: [],
   completedThreads: [],
-  forbiddenContradictions: []
+  characterFacts: [],
+  itemFacts: [],
+  relationshipFacts: [],
+  promisesAndContracts: [],
+  contradictionRules: []
 },
 
 keeper: {
@@ -148,6 +127,7 @@ keeper: {
   majorObstacles: [],
   revealedTruths: []
 },
+
 ended: false,
 
 recentEventSeeds: [],
@@ -245,39 +225,18 @@ function uniqueList(list, max = 12) {
 
 function createEmptyStoryMemory() {
   return {
-  mainGoal: "",
-  goalStatus: "진행 중",
-  currentObjective: "",
+    mainGoal: "",
+    goalStatus: "진행 중",
+    currentObjective: "",
 
-  currentLocation: "",
-  intendedDestination: "",
-  travelRoute: [],
-  travelPurpose: "",
-
-  characters: [],
-    companions: [],
-
-    rescuedTargets: [],
-    missingTargets: [],
-
-    relationships: [],
-    romance: [],
-    marriage: [],
-    family: [],
-    children: [],
-
-    friends: [],
-    rivals: [],
-
-    quests: [],
-    promises: [],
-    training: [],
-    competitions: [],
-
-    importantFacts: [],
-    unresolvedThreads: [],
+    canonFacts: [],
+    activeThreads: [],
     completedThreads: [],
-    forbiddenContradictions: []
+    characterFacts: [],
+    itemFacts: [],
+    relationshipFacts: [],
+    promisesAndContracts: [],
+    contradictionRules: []
   };
 }
 
@@ -306,45 +265,30 @@ function storyMemoryText(gameState) {
 - 주 목표: ${memory.mainGoal || gameState.playerGoal || "미정"}
 - 목표 상태: ${memory.goalStatus || "진행 중"}
 - 현재 목적: ${memory.currentObjective || "미정"}
-- 현재 위치: ${memory.currentLocation || "미정"}
-- 목적지: ${memory.intendedDestination || "미정"}
-- 이동 목적: ${memory.travelPurpose || "미정"}
-- 이동 경로: ${uniqueList(memory.travelRoute).join(" → ") || "없음"}
 
-인물/동행:
-- 주요 인물: ${uniqueList(memory.characters).join(", ") || "없음"}
-- 동행자: ${uniqueList(memory.companions).join(", ") || "없음"}
+확정된 사실:
+${uniqueList(memory.canonFacts, 25).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
 
-구출/실종:
-- 구출 완료 대상: ${uniqueList(memory.rescuedTargets).join(", ") || "없음"}
-- 실종/납치/수색 대상: ${uniqueList(memory.missingTargets).join(", ") || "없음"}
-
-관계:
-- 관계 변화: ${uniqueList(memory.relationships).join(", ") || "없음"}
-- 연애: ${uniqueList(memory.romance).join(", ") || "없음"}
-- 결혼: ${uniqueList(memory.marriage).join(", ") || "없음"}
-- 가족/육아: ${uniqueList(memory.family).join(", ") || "없음"}
-- 자녀/아이 관련: ${uniqueList(memory.children).join(", ") || "없음"}
-- 친구: ${uniqueList(memory.friends).join(", ") || "없음"}
-- 라이벌: ${uniqueList(memory.rivals).join(", ") || "없음"}
-
-진행 요소:
-- 퀘스트: ${uniqueList(memory.quests).join(", ") || "없음"}
-- 약속: ${uniqueList(memory.promises).join(", ") || "없음"}
-- 훈련: ${uniqueList(memory.training).join(", ") || "없음"}
-- 대회: ${uniqueList(memory.competitions).join(", ") || "없음"}
-
-중요 기록:
-${uniqueList(memory.importantFacts, 20).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
-
-남은 문제:
-${uniqueList(memory.unresolvedThreads, 15).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
+진행 중인 사건:
+${uniqueList(memory.activeThreads, 20).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
 
 완료된 사건:
-${uniqueList(memory.completedThreads, 15).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
+${uniqueList(memory.completedThreads, 20).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
 
-절대 모순 금지:
-${uniqueList(memory.forbiddenContradictions, 15).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
+인물 관련 사실:
+${uniqueList(memory.characterFacts, 25).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
+
+아이템/장소/조건 관련 사실:
+${uniqueList(memory.itemFacts, 25).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
+
+관계 관련 사실:
+${uniqueList(memory.relationshipFacts, 25).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
+
+약속/계약/거래:
+${uniqueList(memory.promisesAndContracts, 20).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
+
+모순 방지 규칙:
+${uniqueList(memory.contradictionRules, 25).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
 `;
 }
 function addItem(gameState, item) {
@@ -1925,6 +1869,131 @@ ${aiText}
     return aiText;
   }
 }
+async function judgeMemoryContradiction(gameState, playerChoice, aiText) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 RPG 장면 모순 검사관이다. 반드시 JSON만 출력한다."
+        },
+        {
+          role: "user",
+          content: `
+아래 장면이 장기 기억과 명백히 모순되는지 검사해라.
+
+장기 기억:
+${storyMemoryText(gameState)}
+
+플레이어 행동:
+${playerChoice}
+
+이번 장면:
+${aiText}
+
+검사 규칙:
+- 장기 기억과 명백히 충돌할 때만 contradiction을 true로 한다.
+- 단순히 새로운 사건이 생긴 것은 모순이 아니다.
+- 이미 완료된 사건이 아무 설명 없이 미완료로 되돌아가면 모순이다.
+- 이미 구출된 인물을 명확한 재납치/실종 장면 없이 다시 찾고 있다면 모순이다.
+- 이미 동행 중인 인물을 아무 설명 없이 없는 사람처럼 취급하면 모순이다.
+- 이미 특정 용도로 확정된 아이템이나 단서가 아무 설명 없이 다른 용도로 바뀌면 모순이다.
+- 이미 약속, 계약, 관계, 퀘스트 조건이 확정되었는데 장면이 그것을 무시하면 모순이다.
+- 반전, 오해, 거짓 정보, 배신, 재납치, 이탈, 사망, 조건 변경이 장면 안에 명확히 묘사되어 있으면 모순이 아닐 수 있다.
+- 애매하면 contradiction은 false로 둔다.
+- JSON만 출력한다.
+
+형식:
+{
+  "contradiction": true 또는 false,
+  "reasons": ["모순 이유"],
+  "fixInstruction": "어떻게 고쳐야 하는지 짧게"
+}
+`
+        }
+      ]
+    });
+
+    return parseJson(response.choices[0].message.content, {
+      contradiction: false,
+      reasons: [],
+      fixInstruction: ""
+    });
+  } catch {
+    return {
+      contradiction: false,
+      reasons: [],
+      fixInstruction: ""
+    };
+  }
+}
+
+async function rewriteContradictedScene(gameState, playerChoice, aiText, contradictionJudge) {
+  try {
+    const reasons = Array.isArray(contradictionJudge.reasons)
+      ? contradictionJudge.reasons.join("\n")
+      : "";
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 RPG 장면을 장기 기억과 모순되지 않게 고쳐 쓰는 편집자다."
+        },
+        {
+          role: "user",
+          content: `
+아래 장면은 장기 기억과 충돌한다.
+장기 기억을 우선해서 장면을 다시 써라.
+
+장기 기억:
+${storyMemoryText(gameState)}
+
+플레이어 행동:
+${playerChoice}
+
+모순 이유:
+${reasons || "명확한 이유 없음"}
+
+수정 지시:
+${contradictionJudge.fixInstruction || "장기 기억과 충돌하지 않게 고쳐라."}
+
+문제 장면:
+${aiText}
+
+수정 규칙:
+- 장기 기억에 적힌 확정 사실을 우선한다.
+- 이미 완료된 사건을 아무 설명 없이 다시 미완료로 되돌리지 않는다.
+- 이미 구출된 인물을 다시 찾고 있는 대상으로 만들지 않는다. 단, 재납치가 필요하면 장면 안에서 재납치 과정을 명확히 보여준다.
+- 이미 용도가 확정된 아이템이나 단서는 그 용도를 유지한다.
+- 아이템 용도나 퀘스트 조건을 바꾸려면 기존 정보가 거짓, 오해, 반전이었다는 설명을 장면 안에 명확히 넣는다.
+- 동행자, 친구, 연인, 배우자, 라이벌, 적대자 관계를 이유 없이 초기화하지 않는다.
+- 플레이어 행동의 핵심은 유지하되, 결과가 장기 기억과 맞게 이어지게 한다.
+- 전투가 필요하면 마지막 줄에 [전투발생:전투대상이름]을 붙인다.
+- 골드나 아이템 변화가 있으면 기존 태그 형식을 사용한다.
+- 선택지는 3개만 만든다.
+
+출력 형식:
+
+설명:
+(수정된 설명)
+
+선택지:
+1. (선택지)
+2. (선택지)
+3. (선택지)
+`
+        }
+      ]
+    });
+
+    return response.choices[0].message.content;
+  } catch {
+    return aiText;
+  }
+}
 async function judgeCombatScene(aiText, playerChoice) {
   try {
     const response = await openai.chat.completions.create({
@@ -2421,7 +2490,7 @@ async function judgeStoryMemory(gameState, playerChoice, aiText) {
         {
           role: "user",
           content: `
-아래 장면을 보고 게임의 장기 기억을 갱신해라.
+아래 장면을 보고 게임 진행에 오래 유지되어야 할 중요한 사실만 장기 기억으로 갱신해라.
 
 현재 장기 기억:
 ${storyMemoryText(gameState)}
@@ -2434,20 +2503,20 @@ ${aiText}
 
 판정 규칙:
 - 장면에서 실제로 확정된 사실만 기록한다.
-- 추측, 분위기, 가능성만으로는 기록하지 않는다.
-- 구출, 실종, 납치, 보호, 동행 상태를 판단한다.
-- 연애, 호감, 고백, 교제, 이별, 삼각관계, 배우자 관계를 판단한다.
-- 결혼, 약혼, 가족 형성, 임신, 출산, 육아, 자녀 보호를 판단한다.
-- 친구, 동료, 은인, 적대자, 라이벌, 스승, 제자 관계를 판단한다.
-- 훈련 시작, 훈련 완료, 기술 습득, 시험 통과, 대회 참가, 승패를 판단한다.
-- 퀘스트 수락, 진행, 실패, 완료, 보상 미수령, 후속 의뢰를 판단한다.
-- 약속, 계약, 맹세, 빚, 거래 조건을 판단한다.
-- 한 번 완료된 사건은 completedThreads에 넣는다.
-- 아직 해결되지 않은 문제는 unresolvedThreads에 넣는다.
-- 앞으로 반복되면 안 되는 모순은 forbiddenContradictions에 넣는다.
+- 추측, 가능성, 분위기, 암시만으로는 기록하지 않는다.
+- 인물의 생존, 사망, 구출, 실종, 동행, 이탈, 배신, 보호 상태를 기록한다.
+- 아이템의 용도, 소유자, 획득 여부, 사용 조건, 퀘스트 필요 조건을 기록한다.
+- 장소, 봉인, 결계, 문, 열쇠, 증거, 단서, 의식 조건처럼 이후 장면에 영향을 주는 설정을 기록한다.
+- 연애, 결혼, 가족, 육아, 친구, 라이벌, 스승, 제자, 적대 관계를 기록한다.
+- 퀘스트 수락, 진행, 완료, 실패, 보상 미수령, 후속 의뢰를 기록한다.
+- 약속, 계약, 거래, 빚, 보수, 맹세, 조건을 기록한다.
+- 이미 끝난 사건은 completedThreads에 넣는다.
+- 아직 해결되지 않은 사건은 activeThreads에 넣는다.
+- 앞으로 어기면 안 되는 설정은 contradictionRules에 넣는다.
 - 이미 완료된 일을 명확한 새 사건 없이 다시 미완료로 되돌리지 않는다.
-- 이미 동행자가 된 인물은 명확한 이탈 장면 없이 사라진 것처럼 쓰지 않는다.
-- 이미 연인/배우자/친구/라이벌이 된 관계는 이후에도 유지되어야 한다.
+- 이미 특정 용도로 확정된 아이템은 명확한 반전 없이 다른 용도로 바꾸지 않는다.
+- 이미 동행자가 된 인물은 명확한 이탈/사망/실종 장면 없이 사라진 것처럼 취급하지 않는다.
+- 이미 확정된 관계는 명확한 변화 장면 없이 초기화하지 않는다.
 - 장면에 없는 사실을 새로 만들지 않는다.
 - 모든 배열에는 짧은 한국어 문장만 넣는다.
 - JSON만 출력한다.
@@ -2458,30 +2527,16 @@ ${aiText}
   "goalStatus": "진행 중 / 부분 완료 / 완료 / 실패",
   "currentObjective": "현재 목적",
 
-  "characters": ["주요 인물 기록"],
-  "companions": ["동행자 기록"],
+  "canonFacts": ["세계관, 사건, 목표, 장소에 관한 확정 사실"],
+  "activeThreads": ["아직 진행 중인 사건이나 문제"],
+  "completedThreads": ["이미 완료된 사건"],
 
-  "rescuedTargets": ["구출 완료 대상"],
-  "missingTargets": ["실종/납치/수색 대상"],
+  "characterFacts": ["인물 상태, 동행, 사망, 구출, 실종, 정체 관련 사실"],
+  "itemFacts": ["아이템, 단서, 열쇠, 조건, 장소, 용도 관련 사실"],
+  "relationshipFacts": ["연애, 결혼, 가족, 친구, 라이벌, 적대 관계"],
+  "promisesAndContracts": ["약속, 계약, 거래, 보수, 빚, 맹세"],
 
-  "relationships": ["관계 변화"],
-  "romance": ["연애 관련 사실"],
-  "marriage": ["결혼 관련 사실"],
-  "family": ["가족/육아 관련 사실"],
-  "children": ["자녀/아이 관련 사실"],
-
-  "friends": ["친구 관련 사실"],
-  "rivals": ["라이벌 관련 사실"],
-
-  "quests": ["퀘스트 기록"],
-  "promises": ["약속/계약/맹세 기록"],
-  "training": ["훈련 기록"],
-  "competitions": ["대회 기록"],
-
-  "importantFacts": ["중요한 사실"],
-  "unresolvedThreads": ["남은 문제"],
-  "completedThreads": ["완료된 사건"],
-  "forbiddenContradictions": ["앞으로 금지할 모순"]
+  "contradictionRules": ["앞으로 어기면 안 되는 모순 방지 규칙"]
 }
 `
         }
@@ -2511,91 +2566,61 @@ function mergeStoryMemory(gameState, memoryUpdate) {
     memory.currentObjective = String(memoryUpdate.currentObjective).trim();
   }
 
-  const mergeList = (key, max = 15) => {
+  const mergeList = (key, max = 25) => {
     memory[key] = uniqueList([
       ...(memory[key] || []),
       ...(Array.isArray(memoryUpdate[key]) ? memoryUpdate[key] : [])
     ], max);
   };
 
-  mergeList("characters", 20);
-  mergeList("companions", 12);
-
-  mergeList("rescuedTargets", 12);
-  mergeList("missingTargets", 12);
-
-  mergeList("relationships", 20);
-  mergeList("romance", 15);
-  mergeList("marriage", 12);
-  mergeList("family", 15);
-  mergeList("children", 12);
-
-  mergeList("friends", 15);
-  mergeList("rivals", 15);
-
-  mergeList("quests", 20);
-  mergeList("promises", 20);
-  mergeList("training", 15);
-  mergeList("competitions", 15);
-
-  mergeList("importantFacts", 25);
-  mergeList("unresolvedThreads", 20);
-  mergeList("completedThreads", 20);
-  mergeList("forbiddenContradictions", 20);
-
-  memory.rescuedTargets.forEach((rescuedName) => {
-    memory.missingTargets = memory.missingTargets.filter(
-      (missingName) =>
-        !missingName.includes(rescuedName) &&
-        !rescuedName.includes(missingName)
-    );
-  });
+  mergeList("canonFacts", 30);
+  mergeList("activeThreads", 25);
+  mergeList("completedThreads", 25);
+  mergeList("characterFacts", 30);
+  mergeList("itemFacts", 30);
+  mergeList("relationshipFacts", 30);
+  mergeList("promisesAndContracts", 25);
+  mergeList("contradictionRules", 30);
 
   memory.completedThreads.forEach((completed) => {
-    memory.unresolvedThreads = memory.unresolvedThreads.filter(
+    memory.activeThreads = memory.activeThreads.filter(
       (thread) =>
         !thread.includes(completed) &&
         !completed.includes(thread)
     );
   });
 
-  memory.rescuedTargets.forEach((rescuedName) => {
-    memory.forbiddenContradictions.push(
-      `${rescuedName}은 이미 구출되었으므로, 명확한 재납치/실종 장면 없이 다시 수색 대상으로 만들지 않는다.`
+  memory.completedThreads.forEach((completed) => {
+    memory.contradictionRules.push(
+      `완료된 사건 "${completed}"은 명확한 새 사건 없이 다시 미완료 상태로 되돌리지 않는다.`
     );
   });
 
-  memory.companions.forEach((companion) => {
-    memory.forbiddenContradictions.push(
-      `${companion}은 동행자로 기록되었으므로, 명확한 이탈/사망/실종 장면 없이 없는 사람처럼 취급하지 않는다.`
+  memory.itemFacts.forEach((itemFact) => {
+    memory.contradictionRules.push(
+      `아이템/조건 기록 "${itemFact}"와 충돌하는 용도 변경은 명확한 반전이나 오해 해소 장면 없이 만들지 않는다.`
     );
   });
 
-  memory.romance.forEach((romanceFact) => {
-    memory.forbiddenContradictions.push(
-      `연애 관계 기록 "${romanceFact}"와 충돌하는 장면을 명확한 이별/변심/갈등 없이 만들지 않는다.`
+  memory.characterFacts.forEach((characterFact) => {
+    memory.contradictionRules.push(
+      `인물 기록 "${characterFact}"와 충돌하는 상태 변경은 명확한 장면 없이 만들지 않는다.`
     );
   });
 
-  memory.marriage.forEach((marriageFact) => {
-    memory.forbiddenContradictions.push(
-      `결혼 관계 기록 "${marriageFact}"와 충돌하는 장면을 명확한 파혼/이별/사망 없이 만들지 않는다.`
+  memory.relationshipFacts.forEach((relationshipFact) => {
+    memory.contradictionRules.push(
+      `관계 기록 "${relationshipFact}"는 명확한 변화 장면 없이 초기화하지 않는다.`
     );
   });
 
-  memory.friends.forEach((friendFact) => {
-    memory.forbiddenContradictions.push(
-      `친구 관계 기록 "${friendFact}"와 충돌하는 장면을 명확한 배신/절교 없이 만들지 않는다.`
+  memory.promisesAndContracts.forEach((promiseFact) => {
+    memory.contradictionRules.push(
+      `약속/계약 기록 "${promiseFact}"는 이행, 파기, 변경 장면 없이 없는 일로 취급하지 않는다.`
     );
   });
 
-  memory.rivals.forEach((rivalFact) => {
-    memory.forbiddenContradictions.push(
-      `라이벌 관계 기록 "${rivalFact}"를 이후 장면에서 유지한다.`
-    );
-  });
-
-  memory.forbiddenContradictions = uniqueList(memory.forbiddenContradictions, 20);
+  memory.contradictionRules = uniqueList(memory.contradictionRules, 30);
 }
 async function judgeStoryRewards(gameState, playerChoice, aiText) {
   try {
@@ -2832,14 +2857,24 @@ gameState.playerGoal =
 gameState.storyMemory.mainGoal = gameState.playerGoal;
 gameState.storyMemory.goalStatus = "진행 중";
 gameState.storyMemory.currentObjective = gameState.playerGoal;
-gameState.storyMemory.importantFacts = [
-  `플레이어의 중대한 목표는 ${gameState.playerGoal}이다.`,
-  `플레이어의 캐릭터 설정은 ${gameState.playerPersonality}이다.`
+
+gameState.storyMemory.canonFacts = [
+  `플레이어의 중대한 목표는 "${gameState.playerGoal}"이다.`,
+  `플레이어의 캐릭터 설정은 "${gameState.playerPersonality}"이다.`
 ];
-gameState.storyMemory.unresolvedThreads = [
+
+gameState.storyMemory.activeThreads = [
   `주 목표 "${gameState.playerGoal}"는 아직 해결되지 않았다.`
 ];
 
+gameState.storyMemory.characterFacts = [
+  `플레이어 캐릭터 설정: ${gameState.playerPersonality}`
+];
+
+gameState.storyMemory.contradictionRules = [
+  `플레이어의 캐릭터 설정 "${gameState.playerPersonality}"와 충돌하는 묘사를 명확한 변화 장면 없이 만들지 않는다.`,
+  `주 목표 "${gameState.playerGoal}"를 명확한 완료 장면 없이 완료된 것처럼 처리하지 않는다.`
+];
   
 
     const jobStats = await generateJobStats(gameState.playerJob);
@@ -3178,6 +3213,14 @@ ${keywordEventDirective}
 - 최종 목표에 빨리 닿았을 경우, 완전한 종료가 아니라 부분 성공, 후속 문제, 배후 발견, 탈출, 보호, 추격, 새로운 조건으로 이어간다.
 - 구출 대상, 연인, 배우자, 친구, 라이벌, 동행자, 퀘스트 대상은 장기 기억과 충돌하지 않게 유지한다.
 - 이미 완료된 사건을 명확한 새 사건 없이 다시 미완료로 되돌리지 않는다.
+- 장기 기억에 적힌 사실을 우선한다.
+- 확정된 사실, 진행 중인 사건, 완료된 사건, 인물 상태, 아이템 용도, 관계, 약속, 계약은 이후 장면에서도 유지한다.
+- 이미 완료된 사건은 명확한 새 사건 없이 다시 미완료로 되돌리지 않는다.
+- 이미 특정 용도로 확정된 아이템이나 단서는 명확한 반전, 오해 해소, 거짓 정보였다는 설명 없이 다른 용도로 바꾸지 않는다.
+- 이미 동행자, 친구, 연인, 배우자, 라이벌, 적으로 확정된 인물 관계는 명확한 변화 장면 없이 초기화하지 않는다.
+- 플레이어가 어디로 가고 싶다고 정하면 그 목적지는 명확히 도착하거나 목적지가 바뀌기 전까지 유지한다.
+- 직전 장면과 장기 기억이 충돌하면 장기 기억을 기준으로 한다.
+- 중요한 사실이 바뀌면 장면 안에서 그 변화 과정을 명확히 보여준다.
 
 
 출력 형식:
@@ -3223,6 +3266,17 @@ if (gameState.sceneGoalStallCount >= 2) {
   aiText = await forceResolveSceneGoal(gameState, playerChoice, aiText);
   gameState.sceneGoalStallCount = 0;
   gameState.activeSceneGoal = "";
+}
+
+const contradictionJudge = await judgeMemoryContradiction(gameState, playerChoice, aiText);
+
+if (contradictionJudge.contradiction) {
+  aiText = await rewriteContradictedScene(
+    gameState,
+    playerChoice,
+    aiText,
+    contradictionJudge
+  );
 }
 
 aiText = parseGoldUses(gameState, aiText);

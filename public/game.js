@@ -4,6 +4,92 @@ if (!sessionId) {
   sessionId = crypto.randomUUID();
   localStorage.setItem("trpgSessionId", sessionId);
 }
+function getStoryLogKey() {
+  return `trpgStoryLog:${sessionId}`;
+}
+
+function loadStoryLog() {
+  try {
+    return JSON.parse(localStorage.getItem(getStoryLogKey()) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveStoryLog(logs) {
+  localStorage.setItem(getStoryLogKey(), JSON.stringify(logs.slice(-100)));
+}
+
+function addStoryLog(choice, data) {
+  if (!data || !data.text) return;
+
+  const logs = loadStoryLog();
+
+  logs.push({
+    turn: data.turn ?? "-",
+    dice: data.dice ?? "-",
+    choice: choice || "알 수 없는 행동",
+    text: data.text,
+    time: new Date().toLocaleString("ko-KR")
+  });
+
+  saveStoryLog(logs);
+  renderStoryLog();
+}
+
+function renderStoryLog() {
+  const logList = document.getElementById("logList");
+  if (!logList) return;
+
+  const logs = loadStoryLog();
+
+  logList.innerHTML = "";
+
+  if (logs.length === 0) {
+    logList.textContent = "기록 없음";
+    return;
+  }
+
+  [...logs].reverse().forEach((log) => {
+    const entry = document.createElement("div");
+    entry.className = "log-entry";
+
+    const meta = document.createElement("div");
+    meta.className = "log-meta";
+    meta.textContent = `턴: ${log.turn} / 주사위: ${log.dice} / ${log.time}`;
+
+    const choice = document.createElement("div");
+    choice.className = "log-choice";
+    choice.textContent = `행동: ${log.choice}`;
+
+    const text = document.createElement("div");
+    text.className = "log-text";
+    text.textContent = log.text;
+
+    entry.appendChild(meta);
+    entry.appendChild(choice);
+    entry.appendChild(text);
+
+    logList.appendChild(entry);
+  });
+}
+
+function toggleLog() {
+  const logBox = document.getElementById("logBox");
+  if (!logBox) return;
+
+  if (logBox.style.display === "block") {
+    logBox.style.display = "none";
+  } else {
+    logBox.style.display = "block";
+    renderStoryLog();
+  }
+}
+
+function clearStoryLog() {
+  localStorage.removeItem(getStoryLogKey());
+  renderStoryLog();
+}
 
 function createFreshSession() {
   sessionId = crypto.randomUUID();
@@ -231,6 +317,7 @@ async function postJson(url, body) {
 async function startGame() {
   try {
     createFreshSession();
+    clearStoryLog();
 
     const playerName = getInputValue("nameInput", "이름 없는 자");
     const playerJob = getInputValue("jobInput", "모험가");
@@ -313,10 +400,11 @@ async function sendChoice(choiceText) {
     }
 
     updateAll(data);
+addStoryLog(choice, data);
 
-    if (input) {
-      input.value = "";
-    }
+if (input) {
+  input.value = "";
+}
   } catch (error) {
     showError(error);
   }
