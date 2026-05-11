@@ -183,6 +183,29 @@ function storyTextOnly(aiText) {
     .replace(/선택지:[\s\S]*/g, "")
     .trim();
 }
+function hasBatchim(text) {
+  const value = String(text || "").trim();
+
+  if (!value) {
+    return false;
+  }
+
+  const lastChar = value[value.length - 1];
+  const code = lastChar.charCodeAt(0);
+
+  if (code < 0xac00 || code > 0xd7a3) {
+    return false;
+  }
+
+  return (code - 0xac00) % 28 !== 0;
+}
+
+function withJosa(text, pair) {
+  const value = String(text || "").trim();
+  const [withBatchimText, withoutBatchimText] = pair.split("/");
+
+  return `${value}${hasBatchim(value) ? withBatchimText : withoutBatchimText}`;
+}
 function clampNumber(value, min, max, fallback) {
   const number = Number(value);
 
@@ -711,30 +734,30 @@ ${playerJob}
 async function generateMonsterStats(monsterName, gameState) {
   const turn = gameState?.turn || 1;
 
-  let hpMin = 16;
-let hpMax = 34;
+  let hpMin = 18;
+let hpMax = 36;
 let attackMin = 4;
 let attackMax = 8;
 
 if (turn >= 11 && turn <= 25) {
-  hpMin = 28;
-  hpMax = 58;
+  hpMin = 30;
+  hpMax = 62;
   attackMin = 6;
   attackMax = 11;
 }
 
 if (turn >= 26 && turn <= 40) {
-  hpMin = 45;
-  hpMax = 90;
+  hpMin = 48;
+  hpMax = 95;
   attackMin = 8;
-  attackMax = 14;
+  attackMax = 15;
 }
 
 if (turn >= 41) {
-  hpMin = 70;
-  hpMax = 130;
-  attackMin = 10;
-  attackMax = 18;
+  hpMin = 75;
+  hpMax = 140;
+  attackMin = 11;
+  attackMax = 19;
 }
 const strongMonsterWords = [
   "보스",
@@ -749,18 +772,43 @@ const strongMonsterWords = [
   "정예",
   "거인",
   "골렘",
-  "무리"
+  "무리",
+  "라이벌",
+  "암살자",
+  "추적자"
 ];
 
-const isStrongMonster = strongMonsterWords.some((word) =>
-  String(monsterName || "").includes(word)
+const bossMonsterWords = [
+  "보스",
+  "우두머리",
+  "대장",
+  "군주",
+  "왕",
+  "마왕",
+  "최종",
+  "수문장"
+];
+
+const monsterNameText = String(monsterName || "");
+
+const isBossMonster = bossMonsterWords.some((word) =>
+  monsterNameText.includes(word)
 );
 
-if (isStrongMonster) {
-  hpMin = Math.floor(hpMin * 1.4);
-  hpMax = Math.floor(hpMax * 1.5);
+const isStrongMonster = strongMonsterWords.some((word) =>
+  monsterNameText.includes(word)
+);
+
+if (isBossMonster) {
+  hpMin = Math.floor(hpMin * 1.8);
+  hpMax = Math.floor(hpMax * 2.0);
+  attackMin = Math.floor(attackMin * 1.35);
+  attackMax = Math.floor(attackMax * 1.45);
+} else if (isStrongMonster) {
+  hpMin = Math.floor(hpMin * 1.45);
+  hpMax = Math.floor(hpMax * 1.6);
   attackMin = Math.floor(attackMin * 1.2);
-  attackMax = Math.floor(attackMax * 1.25);
+  attackMax = Math.floor(attackMax * 1.3);
 }
   try {
     const response = await openai.chat.completions.create({
@@ -1269,7 +1317,7 @@ async function handleCombat(gameState, choice) {
   if (combat.monsterHp <= 0) {
   const reward = await finishCombat(gameState, dice);
 
-  text += `\n${reward.monsterName}은 쓰러졌다.\n`;
+  text += `\n${withJosa(reward.monsterName, "은/는")} 쓰러졌다.\n`;
   text += `${reward.rewardReason}으로 ${reward.rewardGold}골드를 얻었다.\n`;
 
   gameState.lastScene =
@@ -3132,7 +3180,7 @@ function applyStoryRewards(gameState, aiText) {
       description
     });
 
-    messages.push(`${name}을 얻었다.`);
+    messages.push(`${withJosa(name, "을/를")} 얻었다.`);
   });
 
   aiText = aiText
@@ -3192,7 +3240,7 @@ function applyRewardData(gameState, rewardData) {
     };
 
     addItem(gameState, safeItem);
-    messages.push(`${safeItem.name}을 얻었다.`);
+    messages.push(`${withJosa(safeItem.name, "을/를")} 얻었다.`);
   });
 
   const itemsLost = Array.isArray(rewardData.itemsLost)
@@ -3203,7 +3251,7 @@ function applyRewardData(gameState, rewardData) {
     const removed = removeItemByName(gameState, String(name).trim());
 
     if (removed) {
-      messages.push(`${name}을 잃었다.`);
+      messages.push(`${withJosa(name, "을/를")} 잃었다.`);
     }
   });
 
@@ -3353,6 +3401,114 @@ function mergeStoryMemory(gameState, memoryUpdate) {
 
   memory.contradictionRules = uniqueList(memory.contradictionRules, 30);
 }
+function findMentionedInventoryItems(gameState, playerChoice, aiText) {
+  const combinedText = `${playerChoice || ""}\n${aiText || ""}`;
+
+  return gameState.inventory.filter((item) => {
+    const name = String(item.name || "").trim();
+
+    if (!name) {
+      return false;
+    }
+
+    return combinedText.includes(name);
+  });
+}
+
+async function judgeStoryItemConsumption(gameState, playerChoice, aiText) {
+  const mentionedItems = findMentionedInventoryItems(
+    gameState,
+    playerChoice,
+    aiText
+  );
+
+  if (mentionedItems.length === 0) {
+    return {
+      itemsLost: [],
+      reason: ""
+    };
+  }
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 중세 판타지 RPG 인벤토리 소모 판정기다. 반드시 JSON만 출력한다."
+        },
+        {
+          role: "user",
+          content: `
+아래 장면에서 플레이어의 인벤토리 아이템이 실제로 소모되었는지 판정해라.
+
+플레이어 행동:
+${playerChoice}
+
+현재 인벤토리에서 이번 장면에 언급된 아이템:
+${mentionedItems
+  .map((item) => `- ${item.name} / type: ${item.type} / 설명: ${item.description || "설명 없음"}`)
+  .join("\n")}
+
+이번 장면:
+${aiText}
+
+판정 규칙:
+- 아이템 이름이 언급되었더라도 실제로 사용되지 않았으면 itemsLost에 넣지 않는다.
+- 조사, 확인, 바라봄, 꺼내 봄, 들고 있음, 비교함, 고민함, 보관함은 소모가 아니다.
+- 다른 사람에게 먹임, 바름, 건넴, 전달함, 제단에 바침, 문에 꽂음, 봉인에 사용함, 의식에 소모함, 치료에 사용함, 설치함, 삽입함, 파괴됨, 잃어버림은 소모다.
+- 포션, 약초, 음식, 마법약 같은 소모품은 실제로 먹거나 먹이거나 바르거나 사용했을 때만 소모된다.
+- 열쇠, 쪽지, 두루마리, 펜던트, 지도, 증표 같은 진행용 아이템은 장면에서 문 개방, 봉인 해제, 전달, 해독 완료, 제단 봉헌 등에 실제로 쓰였을 때만 소모된다.
+- 행동이 실패해서 아이템을 실제로 쓰지 못했다면 소모가 아니다.
+- 애매하면 소모하지 않는다.
+- itemsLost에는 현재 인벤토리에 실제로 있는 아이템 이름만 넣는다.
+- JSON만 출력한다.
+
+형식:
+{
+  "itemsLost": ["아이템 이름"],
+  "reason": "짧은 이유"
+}
+`
+        }
+      ]
+    });
+
+    return parseJson(response.choices[0].message.content, {
+      itemsLost: [],
+      reason: ""
+    });
+  } catch {
+    return {
+      itemsLost: [],
+      reason: ""
+    };
+  }
+}
+
+function applyStoryItemConsumption(gameState, consumptionData) {
+  const messages = [];
+
+  const itemsLost = Array.isArray(consumptionData.itemsLost)
+    ? consumptionData.itemsLost
+    : [];
+
+  itemsLost.forEach((name) => {
+    const itemName = String(name || "").trim();
+
+    if (!itemName) {
+      return;
+    }
+
+    const removed = removeItemByName(gameState, itemName);
+
+    if (removed) {
+      messages.push(`${withJosa(itemName, "을/를")} 사용해 인벤토리에서 제거했다.`);
+    }
+  });
+
+  return messages;
+}
 async function judgeStoryRewards(gameState, playerChoice, aiText) {
   try {
     const response = await openai.chat.completions.create({
@@ -3404,6 +3560,14 @@ ${aiText}
 - 포션, 약초, 음식, 마법약처럼 먹거나 바르는 회복 아이템은 quest가 아니라 hp 또는 mp로 둔다.
 - 반지, 검, 방패, 부적, 목걸이가 능력치 상승 장비로 명확히 묘사되면 attack, defense, magic, heal 중 하나로 둔다.
 - 반지, 목걸이, 부적, 펜던트라도 문 개방, 봉인 해제, 단서 해독, 특정 장소 진입에 필요한 물건이면 quest로 둔다.
+- 장면에서 플레이어가 아이템을 집어 들었다, 챙겼다, 주머니에 넣었다, 품에 넣었다, 보관했다, 회수했다, 가져갔다, 받아 들었다, 손에 쥐었다고 나오면 itemsGained에 넣는다.
+- 쪽지, 문서, 열쇠, 지도, 증표, 단서, 주머니, 수정, 부적, 병, 두루마리, 펜던트는 전투 장비가 아니더라도 스토리 진행용 아이템으로 획득될 수 있다.
+- 단순히 아이템을 보았다, 발견했다, 위치를 알았다, 누군가가 가지고 있다고 들었다는 것만으로는 itemsGained에 넣지 않는다.
+- 하지만 플레이어 행동이나 장면 설명상 그 물건을 실제로 챙긴 것이 명확하면 itemsGained에 넣는다.
+- 이미 현재 인벤토리에 같은 이름의 고유 진행용 아이템이 있고, 장면이 같은 물건을 다시 확인한 것뿐이라면 itemsGained에 넣지 않는다.
+- 단, 포션, 약초, 화살, 식량, 재료, 소모품처럼 여러 개 소지할 수 있는 아이템은 같은 이름이 이미 있어도 새로 챙겼다면 itemsGained에 넣는다.
+- 같은 이름의 아이템이라도 새로 하나 더 챙겼다, 추가로 얻었다, 상자에서 꺼냈다, 보상으로 받았다처럼 추가 획득이 명확하면 itemsGained에 넣는다.
+- 단순히 기존 인벤토리의 아이템을 확인하거나 꺼내 본 것뿐이면 itemsGained에 넣지 않는다.
 - JSON만 출력한다.
 
 형식:
@@ -4105,6 +4269,9 @@ ${keywordEventDirective}
 - 단순히 멀리서 보았다, 존재를 알았다, 소문을 들었다, 위치를 확인했다는 것만으로는 아이템 획득 처리하지 않는다.
 - 플레이어가 직접 “챙긴다”, “획득한다”, “가져간다”, “주머니에 넣는다”, “손에 쥔다”, “보관한다”라고 입력했으면 반드시 [아이템획득:이름:type:effectValue:consumable:설명] 형식을 출력한다.
 - 쪽지, 문서, 열쇠, 지도, 증표, 단서, 주머니, 수정, 부적처럼 스토리 진행에 필요한 물건은 장비나 회복템이 아니라 진행용 아이템처럼 묘사한다.
+- 플레이어가 아이템을 집어 들거나, 챙기거나, 주머니에 넣거나, 품에 넣거나, 보관하거나, 회수하거나, 받아 들었으면 실제 획득으로 처리한다.
+- 단순히 발견하거나 바라보거나 위치만 확인한 경우에는 획득으로 처리하지 않는다.
+- 같은 이름의 소모품을 추가로 얻은 경우에는 기존 아이템과 합쳐 수량이 늘어난다.
 
 [태그 형식]
 - 대괄호 태그에는 반드시 정해진 형식만 사용한다.
@@ -4128,6 +4295,9 @@ ${keywordEventDirective}
 - 여관에서 돈을 내고 자면 체력과 마력이 모두 회복된다.
 - 여관 숙박 중에는 낮은 확률로 도둑에게 골드나 아이템을 잃을 수 있다.
 - 여관 숙박비 계산과 회복 처리는 서버가 담당한다.
+- 상인과 거래한다고 해도 정보, 비밀, 쪽지, 단서, 소문, 조건, 협상, 대화를 묻는 행동이면 상점 이용으로 바꾸지 않는다.
+- 상점은 플레이어가 물건 구매, 상품 확인, 포션 구매, 장비 구매, 상점 이용을 명확히 입력했을 때만 연다.
+- 플레이어가 특정 장소로 이동하거나, 은둔 장소로 향하거나, 안전한 곳으로 물러나려 하면 그 행동의 성공, 실패, 대가, 추격 여부를 반드시 정산한다.
 
 [보수와 약속]
 - 플레이어가 일을 끝냈고 보수를 요구하면 보수 지급, 거절, 사기, 협박, 전투 중 하나로 즉시 결론낸다.
@@ -4261,6 +4431,18 @@ if (rewardMessages.length === 0) {
 
   rewardMessages = applyRewardData(gameState, judgedReward);
 }
+const consumedStoryItems = await judgeStoryItemConsumption(
+  gameState,
+  playerChoice,
+  storyTextOnly(aiText)
+);
+
+const consumedStoryItemMessages = applyStoryItemConsumption(
+  gameState,
+  consumedStoryItems
+);
+
+rewardMessages.push(...consumedStoryItemMessages);
 
 if (inlineGoldPaymentMessage) {
   rewardMessages.unshift(inlineGoldPaymentMessage);
