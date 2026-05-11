@@ -183,11 +183,15 @@ function updateInventory(state) {
   }
 
   state.inventory.forEach((item) => {
-    const button = document.createElement("button");
-    button.textContent = `${item.name} 사용`;
-    button.onclick = () => sendChoice(`${item.name} 사용`);
-    buttons.appendChild(button);
-  });
+  if (item.type === "quest") {
+    return;
+  }
+
+  const button = document.createElement("button");
+  button.textContent = `${item.name} 사용`;
+  button.onclick = () => sendChoice(`${item.name} 사용`);
+  buttons.appendChild(button);
+});
 }
 
 function updateCombat(state) {

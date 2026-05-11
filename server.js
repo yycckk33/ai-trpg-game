@@ -26,7 +26,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-const ALLOWED_ITEM_TYPES = ["hp", "mp", "attack", "defense", "magic", "heal"];
+const ALLOWED_ITEM_TYPES = ["hp", "mp", "attack", "defense", "magic", "heal", "quest"];
 
 const gameStates = {};
 
@@ -192,9 +192,78 @@ function clampNumber(value, min, max, fallback) {
 
   return Math.max(min, Math.min(max, number));
 }
+function looksLikeQuestItem(item) {
+  const name = String(item?.name || "");
+  const description = String(item?.description || "");
+  const text = `${name}\n${description}`;
 
+  const directUseWords = [
+    "HP",
+    "MP",
+    "체력 회복",
+    "마나 회복",
+    "공격력",
+    "방어력",
+    "마법력",
+    "회복력",
+    "능력치",
+    "장착하면",
+    "착용하면",
+    "피해량",
+    "방어 보정",
+    "마법 보정"
+  ];
+
+  const questWords = [
+    "열쇠",
+    "쪽지",
+    "문서",
+    "두루마리",
+    "지도",
+    "증표",
+    "단서",
+    "계약서",
+    "의뢰품",
+    "전달품",
+    "봉인석",
+    "마법석",
+    "수정",
+    "결정",
+    "제물",
+    "유물",
+    "성물",
+    "펜던트",
+    "문을 여는",
+    "문을 열",
+    "서고를 여는",
+    "금고를 여는",
+    "봉인을 푸는",
+    "봉인 해제",
+    "제단에 바치는",
+    "누군가에게 건네",
+    "전달해야",
+    "숨겨진 기능",
+    "기계 장치",
+    "비밀 기능",
+    "진행에 필요한",
+    "스토리 진행"
+  ];
+
+  const hasQuestMeaning = questWords.some((word) => text.includes(word));
+  const hasDirectUseMeaning = directUseWords.some((word) => text.includes(word));
+
+  if (hasDirectUseMeaning) {
+    return false;
+  }
+
+  return hasQuestMeaning;
+}
 function normalizeItem(item) {
-  const type = ALLOWED_ITEM_TYPES.includes(item.type) ? item.type : "attack";
+  let type = ALLOWED_ITEM_TYPES.includes(item.type) ? item.type : "attack";
+
+if (looksLikeQuestItem(item)) {
+  type = "quest";
+}
 
   const effectValue =
     type === "hp" || type === "mp"
@@ -202,14 +271,14 @@ function normalizeItem(item) {
       : clampNumber(item.effectValue, 1, 30, 1);
 
   return {
-    name: String(item.name || "이름 없는 아이템").trim(),
-    type,
-    amount: Number(item.amount) > 0 ? Number(item.amount) : 1,
-    effectValue,
-    consumable: Boolean(item.consumable),
-    equipped: Boolean(item.equipped),
-    description: String(item.description || "").trim()
-  };
+  name: String(item.name || "이름 없는 아이템").trim(),
+  type,
+  amount: Number(item.amount) > 0 ? Number(item.amount) : 1,
+  effectValue: type === "quest" ? 1 : effectValue,
+  consumable: type === "quest" ? false : Boolean(item.consumable),
+  equipped: type === "quest" ? false : Boolean(item.equipped),
+  description: String(item.description || "").trim()
+};
 }
 
 function inventoryText(gameState) {
@@ -447,6 +516,14 @@ async function useItem(gameState, choice) {
       text: "사용할 수 있는 아이템이 없다."
     };
   }
+  if (item.type === "quest") {
+  return {
+    success: false,
+    text:
+      `${item.name}은 직접 사용하거나 장착하는 아이템이 아니다.\n` +
+      `문을 열거나, 단서를 해독하거나, 누군가에게 건네거나, 특정 장소에서 사용하는 방식으로 처리해야 한다.`
+  };
+}
   const usageJudge = await judgeItemUsageType(gameState, item);
 
 if (usageJudge.usageType === "quest") {
@@ -866,7 +943,11 @@ ${gameState.playerJob} ${gameState.playerName}
 - 무기, 장신구, 음식, 도구, 부적, 차, 반지, 목걸이 등을 섞는다.
 - 가격은 5~80골드.
 - effectValue는 1~20.
-- type은 반드시 attack, defense, magic, heal, hp, mp 중 하나.
+- type은 hp, mp, attack, defense, magic, heal, quest 중 하나만 쓴다.
+- hp는 체력 회복 아이템, mp는 마력 회복 아이템, attack은 공격 장비, defense는 방어 장비, magic은 마법 장비, heal은 회복 보조 장비, quest는 스토리 진행용 아이템이다.
+- 열쇠, 쪽지, 문서, 두루마리, 지도, 증표, 단서, 계약서, 의뢰품, 전달품, 봉인석, 마법석, 수정, 결정, 제물, 유물, 성물, 펜던트처럼 문 개방, 봉인 해제, 정보 해독, 전달, 특정 장소 진입에 필요한 물건은 type을 quest로 둔다.
+- quest 아이템은 직접 사용하거나 장착하는 아이템으로 묘사하지 않는다.
+- quest 아이템은 필요한 장면에서 “문에 꽂는다”, “단서를 해독한다”, “누군가에게 건넨다”, “제단에 바친다” 같은 스토리 행동으로 사용한다.
 - consumable이 true면 사용 후 사라진다.
 - consumable이 false면 장비처럼 사용 후 사라지지 않는다.
 - 너무 강한 아이템은 만들지 않는다.
@@ -2499,7 +2580,13 @@ function hasExitIntent(choice) {
     text.includes("벗어나") ||
     text.includes("탈출") ||
     text.includes("자리를 피") ||
-    text.includes("거리를 벌")
+    text.includes("거리를 벌") ||
+    text.includes("이동") ||
+    text.includes("장소로 향") ||
+    text.includes("쪽으로 향") ||
+    text.includes("은둔 장소") ||
+    text.includes("안전한 곳") ||
+    text.includes("몸을 숨길 곳")
   );
 }
 
@@ -3311,6 +3398,12 @@ ${aiText}
 - 이미 현재 인벤토리에 같은 이름의 고유 진행용 아이템이 있고, 장면이 같은 물건을 다시 확인한 것뿐이라면 itemsGained에 넣지 않는다.
 - 단, 포션, 약초, 화살, 식량, 재료, 소모품처럼 여러 개 소지할 수 있는 아이템은 같은 이름이 이미 있어도 추가 획득이 명확하면 itemsGained에 넣는다.
 - 단순히 기존 인벤토리의 아이템을 확인하거나 꺼내 본 것뿐이면 itemsGained에 넣지 않는다.
+- 아이템이 열쇠, 쪽지, 문서, 두루마리, 지도, 증표, 단서, 계약서, 의뢰품, 전달품, 봉인석, 마법석, 수정, 결정, 제물, 유물, 성물, 펜던트처럼 스토리 진행에 필요한 물건이면 type을 quest로 둔다.
+- quest 아이템의 effectValue는 1로 둔다.
+- quest 아이템의 consumable은 false로 둔다.
+- 포션, 약초, 음식, 마법약처럼 먹거나 바르는 회복 아이템은 quest가 아니라 hp 또는 mp로 둔다.
+- 반지, 검, 방패, 부적, 목걸이가 능력치 상승 장비로 명확히 묘사되면 attack, defense, magic, heal 중 하나로 둔다.
+- 반지, 목걸이, 부적, 펜던트라도 문 개방, 봉인 해제, 단서 해독, 특정 장소 진입에 필요한 물건이면 quest로 둔다.
 - JSON만 출력한다.
 
 형식:
@@ -3319,12 +3412,12 @@ ${aiText}
   "goldReason": "짧은 이유",
   "itemsGained": [
     {
-      "name": "아이템 이름",
-      "type": "attack",
-      "effectValue": 숫자,
-      "consumable": true 또는 false,
-      "description": "짧은 설명"
-    }
+  "name": "아이템 이름",
+  "type": "hp, mp, attack, defense, magic, heal, quest 중 하나",
+  "effectValue": 숫자,
+  "consumable": true 또는 false,
+  "description": "짧은 설명"
+}
   ],
   "itemsLost": ["아이템 이름"]
 }
@@ -3680,18 +3773,49 @@ if (gameState.inn.active) {
       playerChoice.includes("죽") ||
       playerChoice.includes("털");
 
-    const wantsShop =
-      playerChoice.includes("상점") ||
-      playerChoice.includes("상점을") ||
-      playerChoice.includes("상점 찾") ||
-      playerChoice.includes("상인과 거래") ||
-      playerChoice.includes("상인에게 물건") ||
-      playerChoice.includes("상인에게 구매") ||
-      playerChoice.includes("구매한다");
+    const wantsInformationTrade =
+  playerChoice.includes("정보") ||
+  playerChoice.includes("비밀") ||
+  playerChoice.includes("쪽지") ||
+  playerChoice.includes("단서") ||
+  playerChoice.includes("소문") ||
+  playerChoice.includes("사정") ||
+  playerChoice.includes("이유") ||
+  playerChoice.includes("대화") ||
+  playerChoice.includes("묻") ||
+  playerChoice.includes("물어") ||
+  playerChoice.includes("알아본") ||
+  playerChoice.includes("설명") ||
+  playerChoice.includes("협상") ||
+  playerChoice.includes("조건");
 
-    if (wantsShop && !hostileToMerchant) {
-      return res.json(await openShop(gameState));
-    }
+const wantsShop =
+  playerChoice.includes("상점") ||
+  playerChoice.includes("상점을") ||
+  playerChoice.includes("상점 찾") ||
+  playerChoice.includes("상품") ||
+  playerChoice.includes("물건을 산") ||
+  playerChoice.includes("물건을 사") ||
+  playerChoice.includes("포션을 산") ||
+  playerChoice.includes("장비를 산") ||
+  playerChoice.includes("구매한다") ||
+  playerChoice.includes("구입한다") ||
+  (
+    playerChoice.includes("상인과 거래") &&
+    !wantsInformationTrade
+  ) ||
+  (
+    playerChoice.includes("상인에게 구매") &&
+    !wantsInformationTrade
+  ) ||
+  (
+    playerChoice.includes("상인에게 물건") &&
+    !wantsInformationTrade
+  );
+
+if (wantsShop && !hostileToMerchant && !wantsInformationTrade) {
+  return res.json(await openShop(gameState));
+}
     const wantsInn =
   playerChoice.includes("여관") ||
   playerChoice.includes("숙소") ||
