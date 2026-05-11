@@ -178,7 +178,11 @@ function parseJson(text, fallback) {
     return fallback;
   }
 }
-
+function storyTextOnly(aiText) {
+  return String(aiText || "")
+    .replace(/선택지:[\s\S]*/g, "")
+    .trim();
+}
 function clampNumber(value, min, max, fallback) {
   const number = Number(value);
 
@@ -192,11 +196,16 @@ function clampNumber(value, min, max, fallback) {
 function normalizeItem(item) {
   const type = ALLOWED_ITEM_TYPES.includes(item.type) ? item.type : "attack";
 
+  const effectValue =
+    type === "hp" || type === "mp"
+      ? clampNumber(item.effectValue, 5, 30, 10)
+      : clampNumber(item.effectValue, 1, 30, 1);
+
   return {
     name: String(item.name || "이름 없는 아이템").trim(),
     type,
     amount: Number(item.amount) > 0 ? Number(item.amount) : 1,
-    effectValue: clampNumber(item.effectValue, 1, 30, 1),
+    effectValue,
     consumable: Boolean(item.consumable),
     equipped: Boolean(item.equipped),
     description: String(item.description || "").trim()
@@ -321,13 +330,17 @@ function removeItemByName(gameState, name) {
 }
 
 function findItemFromChoice(gameState, choice) {
-  if (!choice.includes(" 사용")) {
+  const text = String(choice || "");
+
+  if (!text.includes("사용")) {
     return null;
   }
 
-  const itemName = choice.replace(" 사용", "").trim();
+  const items = [...gameState.inventory].sort(
+    (a, b) => String(b.name).length - String(a.name).length
+  );
 
-  return gameState.inventory.find((item) => item.name === itemName);
+  return items.find((item) => text.includes(item.name)) || null;
 }
 
 async function judgeItemUsageType(gameState, item) {
@@ -2280,7 +2293,135 @@ ${aiText}
     return aiText;
   }
 }
+function hasRejectOrDeferIntent(choice) {
+  const text = String(choice || "");
 
+  return (
+    text.includes("무시") ||
+    text.includes("거절") ||
+    text.includes("나중") ||
+    text.includes("미뤄") ||
+    text.includes("보류") ||
+    text.includes("우선") ||
+    text.includes("대신") ||
+    text.includes("하지 않는다") ||
+    text.includes("안 한다") ||
+    text.includes("포기")
+  );
+}
+
+async function judgeActionContradiction(gameState, playerChoice, aiText) {
+  if (!hasRejectOrDeferIntent(playerChoice)) {
+    return {
+      contradiction: false,
+      reason: "",
+      fixInstruction: ""
+    };
+  }
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 RPG 장면이 플레이어 행동을 왜곡했는지 검사하는 판정기다. 반드시 JSON만 출력한다."
+        },
+        {
+          role: "user",
+          content: `
+플레이어 행동:
+${playerChoice}
+
+이번 장면:
+${aiText}
+
+판정 규칙:
+- 플레이어가 시험, 의식, 대화, 거래, 퀘스트, 전투, 조사 등을 무시하거나 거절하거나 나중으로 미룬다고 했는데, 장면에서 그것을 완료해버리면 contradiction은 true다.
+- 플레이어가 "아이 구출을 우선한다"처럼 우선순위를 정했는데, 장면이 다른 사건을 먼저 완료하면 contradiction은 true다.
+- 플레이어가 미룬 사건은 보류, 우회, 실패, 위험 증가, 조건 미충족, 다음 선택지로 처리해야 한다.
+- 애매하면 false다.
+- JSON만 출력한다.
+
+형식:
+{
+  "contradiction": true 또는 false,
+  "reason": "문제 이유",
+  "fixInstruction": "수정 지시"
+}
+`
+        }
+      ]
+    });
+
+    return parseJson(response.choices[0].message.content, {
+      contradiction: false,
+      reason: "",
+      fixInstruction: ""
+    });
+  } catch {
+    return {
+      contradiction: false,
+      reason: "",
+      fixInstruction: ""
+    };
+  }
+}
+
+async function rewriteActionContradictionScene(gameState, playerChoice, aiText, actionJudge) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 플레이어 행동을 왜곡한 RPG 장면을 고치는 편집자다."
+        },
+        {
+          role: "user",
+          content: `
+아래 장면은 플레이어 행동과 충돌한다.
+플레이어 행동을 우선해서 다시 써라.
+
+플레이어 행동:
+${playerChoice}
+
+문제 이유:
+${actionJudge.reason}
+
+수정 지시:
+${actionJudge.fixInstruction}
+
+문제 장면:
+${aiText}
+
+수정 규칙:
+- 플레이어가 무시하거나 거절하거나 나중으로 미룬 사건을 이번 장면에서 완료하지 않는다.
+- 플레이어가 우선한다고 한 목표를 먼저 처리한다.
+- 미룬 사건은 보류, 우회, 위험 증가, 조건 미충족, 다음 선택지로 처리한다.
+- 선택지는 반드시 3개 만든다.
+- 전투가 필요하면 마지막 줄에 [전투발생:전투대상이름]을 붙인다.
+- 골드나 아이템 변화가 있으면 기존 태그 형식을 사용한다.
+
+출력 형식:
+
+설명:
+(수정된 설명)
+
+선택지:
+1. (선택지)
+2. (선택지)
+3. (선택지)
+`
+        }
+      ]
+    });
+
+    return response.choices[0].message.content;
+  } catch {
+    return aiText;
+  }
+}
 async function judgeCombatScene(aiText, playerChoice) {
   try {
     const response = await openai.chat.completions.create({
@@ -3439,6 +3580,7 @@ ${keywordEventDirective}
 - 플레이어의 캐릭터 설정은 행동 방식, 말투, 망설임, 죄책감, 주변 반응, 외형 묘사에만 반영한다.
 - 캐릭터가 온순하거나 착하더라도, 플레이어가 직접 공격, 살해, 협박, 강탈, 방화, 도주, 배신 같은 행동을 입력하면 그 행동 자체를 취소하거나 순화하지 않는다.
 - 플레이어가 명확히 싸움을 걸거나 공격을 선언하면 전투 시작, 즉시 제압, 실패, 반격, 도주, 협상 중 하나로 결과를 확정한다.
+- 플레이어가 직접 정한 목표와 캐릭터 설정을 임의로 다른 방향으로 바꾸지 않는다.
 - 마왕 토벌을 강요하지 않는다.
 
 [장기 기억]
@@ -3448,6 +3590,8 @@ ${keywordEventDirective}
 - 이미 특정 용도로 확정된 아이템이나 단서는 명확한 반전, 오해 해소, 거짓 정보였다는 설명 없이 다른 용도로 바꾸지 않는다.
 - 이미 동행자, 친구, 연인, 배우자, 라이벌, 적으로 확정된 인물 관계는 명확한 변화 장면 없이 초기화하지 않는다.
 - 중요한 사실이 바뀌면 장면 안에서 그 변화 과정을 명확히 보여준다.
+- 사건이 완료되면 완료된 사실을 명확히 남기고, 진행 중인 사건과 혼동하지 않는다.
+- 새 사건이 열리더라도 직전 사건의 완료 여부와 남은 문제를 먼저 정리한다.
 
 [사건 진행]
 - 인공지능은 단순 서술자가 아니라 티알피지 진행자처럼 장면을 운영한다.
@@ -3458,6 +3602,7 @@ ${keywordEventDirective}
 - “같은 사건 반복 금지”는 큰 사건을 빨리 끝내라는 뜻이 아니라, 같은 준비 상태나 같은 대사를 반복하지 말라는 뜻이다.
 - 플레이어가 4천왕, 대회, 장기 퀘스트, 구출 작전, 훈련, 연애 관계, 여행 같은 긴 목표를 진행 중이면 2턴 안에 끝내지 않는다.
 - 긴 목표는 매 턴 진행도, 새 정보, 장애물, 비용, 위험, 보상 중 하나가 달라져야 한다.
+- 큰 사건이 이어질 때는 현재 단계가 무엇인지 장면 안에서 드러나야 한다.
 
 [직전 사건 정산]
 - 새 사건보다 직전 사건의 결산을 우선한다.
@@ -3470,6 +3615,14 @@ ${keywordEventDirective}
 - 장면이 끝날 때는 얻은 것, 잃은 것, 바뀐 관계, 열린 문제, 닫힌 문제, 다음 목적 중 최소 하나를 명확히 남긴다.
 - 플레이어가 “나간다”, “돌아간다”, “구출한다”, “완성한다”, “받는다”, “조사한다”, “싸운다”, “고백한다”, “참가한다”, “훈련한다”처럼 결과가 필요한 행동을 하면 흐린 묘사로 넘기지 않는다.
 - 결과를 확정하지 못하는 경우에는 왜 아직 불가능한지와 필요한 조건을 명확히 밝힌다.
+
+[거절/보류 행동 처리]
+- 플레이어가 시험, 의식, 거래, 대화, 퀘스트, 조사, 전투, 협력 요청 등을 무시하거나 거절하거나 나중으로 미룬다고 명확히 입력하면, 그 사건을 이번 턴에 완료한 것으로 처리하지 않는다.
+- 플레이어가 “우선”, “먼저”, “나중에”, “미룬다”, “무시한다”, “거절한다”, “하지 않는다”, “대신” 같은 표현으로 우선순위를 정하면 그 우선순위를 따른다.
+- 플레이어가 어떤 사건을 보류했으면, 그 사건은 보류, 우회, 위험 증가, 조건 미충족, 다음 선택지로 처리한다.
+- 플레이어가 “아이 구출을 우선한다”, “전리품은 나중에 본다”, “시험은 무시한다”처럼 명확히 말하면, 보류한 사건을 몰래 완료하지 않는다.
+- 보류된 사건이 중요하다면 즉시 해결하지 말고, 남은 문제나 다음 선택지로 남긴다.
+- 플레이어가 거절한 행동을 인공지능이 대신 수행한 것처럼 쓰지 않는다.
 
 [정산 행동 제한]
 - 플레이어가 전리품 확인, 보상 정산, 단서 정리, 휴식, 치료, 정보 정리 같은 정산 행동을 하면 새 전투나 새 사건을 바로 열지 않는다.
@@ -3487,6 +3640,15 @@ ${keywordEventDirective}
 - 최종 목표는 후반부 전까지 쉽게 완결하지 않는다.
 - 최종 목표에 빨리 닿았을 경우 완전한 종료가 아니라 부분 성공, 후속 문제, 배후 발견, 탈출, 보호, 추격, 새로운 조건으로 이어간다.
 - 주 목표가 달성되면 같은 목표를 반복하지 말고 보호, 귀환, 후속 목표, 새 목표 확인으로 전환한다.
+
+[사건 규모 제한]
+- 1~10턴은 개인 의뢰, 마을 문제, 작은 몬스터, 첫 단서, 첫 조력자 중심으로 진행한다.
+- 11~25턴은 마을 비밀, 지역 세력, 중간 위협, 숨겨진 조직, 제한된 봉인 문제로 확장한다.
+- 26~40턴부터 균열, 고대 존재, 대형 음모, 강한 적대 세력을 본격적으로 드러낸다.
+- 41턴 이후에 최종 위협과 결말을 처리한다.
+- 초반부터 어둠의 문, 세계 멸망, 고대 군주, 차원 균열 같은 최종급 위협을 전면에 내세우지 않는다.
+- 최종급 위협은 초반에는 소문, 흔적, 작은 이상 현상, 불완전한 단서 정도로만 암시한다.
+- 작은 사건이 큰 사건으로 이어질 수는 있지만, 단계 없이 갑자기 세계급 위협으로 비약하지 않는다.
 
 [반복 방지]
 - 같은 장소, 같은 시비, 같은 대치, 같은 싸움, 같은 준비 상태를 2턴 이상 반복하지 않는다.
@@ -3506,26 +3668,35 @@ ${keywordEventDirective}
 [전투]
 - 실제 물리적 전투가 시작되는 장면이라면 마지막 줄에 [전투발생:전투대상이름]을 출력할 수 있다.
 - 플레이어가 전투를 선언하면 전투를 회피시키거나 다른 이벤트로 덮지 말고, 전투 시작, 전투 결과, 도주, 협상, 대가 중 하나로 처리한다.
-- 전투 수치 계산은 코드가 하므로 인공지능은 전투 데미지와 HP 계산을 하지 않는다.
+- 전투 수치 계산은 코드가 하므로 인공지능은 전투 데미지와 체력 계산을 하지 않는다.
 - 전투 시작 전 일반 지문에서 적의 피해, 승패, 도망, 사망을 미리 확정하지 않는다.
 - 전투 시작 전 일반 지문에서는 적이 모습을 드러내고, 공격 태세를 갖추고, 위협이 임박하는 정도까지만 묘사한다.
 - 전투가 시작될 상황이면 적을 다치게 하거나 쓰러뜨리지 말고 [전투발생:전투대상이름] 태그로 전투 진입만 처리한다.
 - 전투가 끝난 뒤에는 전투 전 장면으로 되돌리지 말고 반드시 다음 국면으로 넘어간다.
 - 일반 장면에서는 주사위를 언급하지 않는다.
 
+[장비와 시대감]
+- 중세 판타지 세계관에서는 총, 권총, 소총, 폭탄, 드론 같은 현대 무기를 쓰지 않는다.
+- 사냥꾼은 활, 석궁, 단검, 창, 덫, 사냥칼 같은 장비를 사용한다.
+- 경비병은 검, 창, 방패, 활, 쇠뇌 같은 장비를 사용한다.
+- 세계관 설명에서 현대 장비가 허용된 경우에만 현대 무기를 등장시킨다.
+- 사용자가 세계관에 없는 장비를 직접 입력하지 않았다면, 인공지능이 임의로 현대 무기를 추가하지 않는다.
+
 [돈과 아이템]
 - 상황상 돈을 쓸 수 있으면 [골드사용:이름:비용:효과] 형식을 한 줄로 추가할 수 있다.
 - 플레이어가 돈을 얻는 행동에 성공하면 [골드획득:금액:이유] 형식을 한 줄로 추가한다.
 - 플레이어가 돈을 잃으면 [골드손실:금액:이유] 형식을 한 줄로 추가한다.
 - 플레이어가 아이템을 얻으면 [아이템획득:이름:type:effectValue:consumable:설명] 형식을 한 줄로 추가한다.
-- type은 hp, mp, attack, defense, magic, heal 중 하나만 쓴다.
-- consumable은 true 또는 false만 쓴다.
+- type은 hp(에이치피, 체력), mp(엠피, 마력), attack(어택, 공격), defense(디펜스, 방어), magic(매직, 마법), heal(힐, 회복) 중 하나만 쓴다.
+- consumable(컨슈머블, 소모 여부)은 true(트루, 참) 또는 false(폴스, 거짓)만 쓴다.
 - 플레이어가 아이템을 잃으면 [아이템손실:이름] 형식을 한 줄로 추가한다.
 - NPC가 선물하거나, 플레이어가 훔치거나, 빼앗거나, 보상으로 받거나, 주워도 실제 획득으로 처리한다.
 - 이미 특정 용도로 확정된 아이템은 명확한 반전이나 오해 해소 없이 다른 용도로 바꾸지 않는다.
 - 열쇠, 문서, 증표, 지도, 단서, 의뢰품, 전달품, 봉인석, 마법석, 수정, 결정, 제물, 유물처럼 스토리 진행에 필요한 아이템은 직접 사용/장착 아이템처럼 묘사하지 않는다.
 - 진행용 아이템은 필요한 장면에서 직접 행동으로 사용한다.
 - 진행용 아이템이 전달, 소모, 파괴, 봉인 해제, 문 개방에 사용되면 [아이템손실:이름] 형식을 한 줄로 추가한다.
+- 회복 아이템은 체력이나 마력을 의미 있게 회복하는 물건으로 묘사한다.
+- 회복 아이템을 보상으로 만들 때는 효과가 너무 미미한 물건처럼 묘사하지 않는다.
 
 [태그 형식]
 - 대괄호 태그에는 반드시 정해진 형식만 사용한다.
@@ -3546,7 +3717,7 @@ ${keywordEventDirective}
 - 상인을 공격하거나 협박하거나 훔치려는 행동을 상점 이용으로 바꾸지 않는다.
 - 마을이나 도시에는 여관이 있을 수 있다.
 - 플레이어가 여관이나 숙소를 찾으면 여관 이용 선택지를 제공할 수 있다.
-- 여관에서 돈을 내고 자면 HP와 MP가 모두 회복된다.
+- 여관에서 돈을 내고 자면 체력과 마력이 모두 회복된다.
 - 여관 숙박 중에는 낮은 확률로 도둑에게 골드나 아이템을 잃을 수 있다.
 - 여관 숙박비 계산과 회복 처리는 서버가 담당한다.
 
@@ -3558,7 +3729,7 @@ ${keywordEventDirective}
 
 [마법과 상태 변화]
 - 플레이어가 일반 장면에서 마법을 사용하면 장면에 그 마법 사용이 드러나게 작성한다.
-- MP 소모 수치 계산은 서버가 따로 처리한다.
+- 마력 소모 수치 계산은 서버가 따로 처리한다.
 - 회복, 피해, 마력 소모, 상태 변화가 명확한 장면이면 그 원인이 드러나야 한다.
 
 [출력]
@@ -3602,7 +3773,7 @@ if (isSceneTooSimilar(gameState, aiText)) {
   aiText = await rewriteTooSimilarScene(gameState, playerChoice, aiText);
 }
 
-const sceneProgressJudge = await judgeSceneProgress(gameState, playerChoice, aiText);
+const sceneProgressJudge = await judgeSceneProgress(gameState, playerChoice, storyTextOnly(aiText));
 applySceneProgressJudge(gameState, sceneProgressJudge);
 
 if (gameState.sceneGoalStallCount >= 2) {
@@ -3611,7 +3782,7 @@ if (gameState.sceneGoalStallCount >= 2) {
   gameState.activeSceneGoal = "";
 }
 
-const contradictionJudge = await judgeMemoryContradiction(gameState, playerChoice, aiText);
+const contradictionJudge = await judgeMemoryContradiction(gameState, playerChoice, storyTextOnly(aiText));
 
 if (contradictionJudge.contradiction) {
   aiText = await rewriteContradictedScene(
@@ -3619,6 +3790,20 @@ if (contradictionJudge.contradiction) {
     playerChoice,
     aiText,
     contradictionJudge
+  );
+}
+const actionJudge = await judgeActionContradiction(
+  gameState,
+  playerChoice,
+  storyTextOnly(aiText)
+);
+
+if (actionJudge.contradiction) {
+  aiText = await rewriteActionContradictionScene(
+    gameState,
+    playerChoice,
+    aiText,
+    actionJudge
   );
 }
 
@@ -3631,7 +3816,7 @@ aiText = removeMalformedRewardTags(aiText);
 let rewardMessages = [...storyRewardResult.messages];
 
 if (rewardMessages.length === 0) {
-  const judgedReward = await judgeStoryRewards(gameState, playerChoice, aiText);
+  const judgedReward = await judgeStoryRewards(gameState, playerChoice, storyTextOnly(aiText));
   rewardMessages = applyRewardData(gameState, judgedReward);
 }
 
@@ -3640,7 +3825,7 @@ if (rewardMessages.length > 0) {
     "\n\n획득/변동:\n" +
     rewardMessages.map((message) => `- ${message}`).join("\n");
 }
-    const judgedStateChange = await judgeStoryStateChanges(gameState, playerChoice, aiText);
+    const judgedStateChange = await judgeStoryStateChanges(gameState, playerChoice, storyTextOnly(aiText));
     const stateMessages = applyStoryStateData(gameState, judgedStateChange);
 
     if (stateMessages.length > 0) {
@@ -3685,7 +3870,7 @@ if (isSettlementAction(playerChoice) && !hasDirectCombatIntent(playerChoice)) {
     target: inferCombatTargetFromChoice(playerChoice)
   };
 } else {
-  combatJudgement = await judgeCombatScene(aiText, playerChoice);
+  combatJudgement = await judgeCombatScene(storyTextOnly(aiText), playerChoice);
 }
 
 if (combatJudgement.combat) {
@@ -3771,7 +3956,7 @@ ${aiText}
         choices.push(`${use.name} (${use.cost}골드)`);
       });
     }
-    const memoryUpdate = await judgeStoryMemory(gameState, playerChoice, aiText);
+    const memoryUpdate = await judgeStoryMemory(gameState, playerChoice, storyTextOnly(aiText));
 mergeStoryMemory(gameState, memoryUpdate);
 
     gameState.lastScene = aiText;
