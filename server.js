@@ -2152,6 +2152,135 @@ ${aiText}
     return aiText;
   }
 }
+function isSettlementAction(choice) {
+  const text = String(choice || "");
+
+  return (
+    text.includes("전리품") ||
+    text.includes("보상") ||
+    text.includes("정산") ||
+    text.includes("수습") ||
+    text.includes("숨을 고른") ||
+    text.includes("휴식") ||
+    text.includes("상처를 치료") ||
+    text.includes("정보를 정리") ||
+    text.includes("단서를 정리")
+  );
+}
+
+function removeMalformedRewardTags(aiText) {
+  return String(aiText || "")
+    .replace(/\[(골드획득|골드손실|골드사용|아이템획득|아이템손실):[^\]]*\]/g, "")
+    .trim();
+}
+
+async function rewriteCombatIntroScene(gameState, playerChoice, aiText, monsterName) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 RPG 전투 진입 장면을 정리하는 편집자다."
+        },
+        {
+          role: "user",
+          content: `
+아래 장면은 전투 UI로 넘어가기 직전의 설명으로 고쳐야 한다.
+
+플레이어:
+이름: ${gameState.playerName}
+직업: ${gameState.playerJob}
+캐릭터 설정: ${gameState.playerPersonality}
+
+플레이어 행동:
+${playerChoice}
+
+전투 대상:
+${monsterName}
+
+문제 장면:
+${aiText}
+
+수정 규칙:
+- 전투가 시작되기 직전까지만 묘사한다.
+- 플레이어의 공격 성공, 적의 피해, 적의 도망, 적의 사망, 승패를 쓰지 않는다.
+- 전투 수치, HP, 데미지 계산을 쓰지 않는다.
+- 전투 대상이 전투 태세를 갖추는 장면까지만 쓴다.
+- 직전 사건과 장기 기억을 무시하지 않는다.
+- 선택지는 쓰지 않는다.
+- [전투발생] 태그도 쓰지 않는다.
+
+출력 형식:
+
+설명:
+(전투 직전 설명)
+`
+        }
+      ]
+    });
+
+    return response.choices[0].message.content;
+  } catch {
+    return aiText;
+  }
+}
+
+async function rewriteSettlementScene(gameState, playerChoice, aiText) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 RPG 정산 장면을 정리하는 편집자다."
+        },
+        {
+          role: "user",
+          content: `
+아래 장면은 전리품 확인, 보상 정산, 휴식, 단서 정리 같은 정산 행동이다.
+새 전투나 새 사건으로 덮지 말고, 직전 사건의 결과를 먼저 정리하도록 다시 써라.
+
+장기 기억:
+${storyMemoryText(gameState)}
+
+플레이어 행동:
+${playerChoice}
+
+문제 장면:
+${aiText}
+
+수정 규칙:
+- 전리품 확인이나 정산 행동은 보상, 단서, 남은 문제, 다음 목적을 정리하는 장면으로 처리한다.
+- 새 전투를 바로 시작하지 않는다.
+- 새 인물이나 새 위협은 직접 등장시키지 말고, 필요하면 다음 선택지의 가능성으로만 남긴다.
+- 전투, 도망, 사망, 피해 결과를 쓰지 않는다.
+- 이미 얻은 전리품이나 단서는 명확히 정리한다.
+- 선택지는 반드시 3개 만든다.
+- 필요한 보상 태그가 있으면 정확한 형식으로만 쓴다.
+- 골드 태그는 반드시 [골드획득:숫자:이유] 형식으로 쓴다.
+- 아이템 태그는 반드시 [아이템획득:이름:type:effectValue:consumable:설명] 형식으로 쓴다.
+
+출력 형식:
+
+설명:
+(정산 장면)
+
+선택지:
+1. (선택지)
+2. (선택지)
+3. (선택지)
+`
+        }
+      ]
+    });
+
+    return response.choices[0].message.content;
+  } catch {
+    return aiText;
+  }
+}
+
 async function judgeCombatScene(aiText, playerChoice) {
   try {
     const response = await openai.chat.completions.create({
@@ -3342,6 +3471,14 @@ ${keywordEventDirective}
 - 플레이어가 “나간다”, “돌아간다”, “구출한다”, “완성한다”, “받는다”, “조사한다”, “싸운다”, “고백한다”, “참가한다”, “훈련한다”처럼 결과가 필요한 행동을 하면 흐린 묘사로 넘기지 않는다.
 - 결과를 확정하지 못하는 경우에는 왜 아직 불가능한지와 필요한 조건을 명확히 밝힌다.
 
+[정산 행동 제한]
+- 플레이어가 전리품 확인, 보상 정산, 단서 정리, 휴식, 치료, 정보 정리 같은 정산 행동을 하면 새 전투나 새 사건을 바로 열지 않는다.
+- 정산 행동에서는 먼저 얻은 것, 잃은 것, 남은 문제, 다음 목적을 정리한다.
+- 전리품 확인 중에는 갑자기 새 적을 등장시켜 전투를 시작하지 않는다.
+- 전리품 확인은 방금 끝난 사건의 보상, 단서, 남은 문제, 다음 목적을 정리하는 장면으로 처리한다.
+- 새 위협은 즉시 전투로 열지 말고 다음 선택지의 가능성으로 남긴다.
+- 정산 행동 중 새 인물이나 새 위협이 필요하면 직접 등장시키지 말고, 흔적이나 소문, 접근하는 기척 정도로만 남긴다.
+
 [스토리 구조]
 - 플레이어의 중대한 목표를 장기 목표로 삼고, 현재 구간에 맞춰 사건을 배치한다.
 - 1~10턴은 도입, 11~25턴은 확장, 26~40턴은 전환, 41~50턴은 결말로 진행한다.
@@ -3371,6 +3508,8 @@ ${keywordEventDirective}
 - 플레이어가 전투를 선언하면 전투를 회피시키거나 다른 이벤트로 덮지 말고, 전투 시작, 전투 결과, 도주, 협상, 대가 중 하나로 처리한다.
 - 전투 수치 계산은 코드가 하므로 인공지능은 전투 데미지와 HP 계산을 하지 않는다.
 - 전투 시작 전 일반 지문에서 적의 피해, 승패, 도망, 사망을 미리 확정하지 않는다.
+- 전투 시작 전 일반 지문에서는 적이 모습을 드러내고, 공격 태세를 갖추고, 위협이 임박하는 정도까지만 묘사한다.
+- 전투가 시작될 상황이면 적을 다치게 하거나 쓰러뜨리지 말고 [전투발생:전투대상이름] 태그로 전투 진입만 처리한다.
 - 전투가 끝난 뒤에는 전투 전 장면으로 되돌리지 말고 반드시 다음 국면으로 넘어간다.
 - 일반 장면에서는 주사위를 언급하지 않는다.
 
@@ -3384,6 +3523,21 @@ ${keywordEventDirective}
 - 플레이어가 아이템을 잃으면 [아이템손실:이름] 형식을 한 줄로 추가한다.
 - NPC가 선물하거나, 플레이어가 훔치거나, 빼앗거나, 보상으로 받거나, 주워도 실제 획득으로 처리한다.
 - 이미 특정 용도로 확정된 아이템은 명확한 반전이나 오해 해소 없이 다른 용도로 바꾸지 않는다.
+- 열쇠, 문서, 증표, 지도, 단서, 의뢰품, 전달품, 봉인석, 마법석, 수정, 결정, 제물, 유물처럼 스토리 진행에 필요한 아이템은 직접 사용/장착 아이템처럼 묘사하지 않는다.
+- 진행용 아이템은 필요한 장면에서 직접 행동으로 사용한다.
+- 진행용 아이템이 전달, 소모, 파괴, 봉인 해제, 문 개방에 사용되면 [아이템손실:이름] 형식을 한 줄로 추가한다.
+
+[태그 형식]
+- 대괄호 태그에는 반드시 정해진 형식만 사용한다.
+- [골드획득:중간금액]처럼 숫자가 아닌 값을 쓰지 않는다.
+- [골드손실:약간]처럼 숫자가 아닌 값을 쓰지 않는다.
+- [골드사용:이름:비용:효과]에서 비용은 반드시 숫자로 쓴다.
+- [아이템획득:이름]처럼 축약 형식을 쓰지 않는다.
+- 골드 획득은 반드시 [골드획득:숫자:이유] 형식으로 쓴다.
+- 골드 손실은 반드시 [골드손실:숫자:이유] 형식으로 쓴다.
+- 아이템 획득은 반드시 [아이템획득:이름:type:effectValue:consumable:설명] 형식으로 쓴다.
+- 아이템 손실은 반드시 [아이템손실:이름] 형식으로 쓴다.
+- 태그 형식을 정확히 만들 수 없으면 태그를 쓰지 말고 설명문으로만 처리한다.
 
 [상점과 여관]
 - 상인이나 상점이 등장하면 상황에 맞는 물건을 살 수 있다.
@@ -3412,7 +3566,6 @@ ${keywordEventDirective}
 - 분위기와 대사를 섞는다.
 - 선택지는 반드시 3개.
 - 출력 형식을 지킨다.
-
 출력 형식:
 
 설명:
@@ -3473,6 +3626,7 @@ aiText = parseGoldUses(gameState, aiText);
 
     const storyRewardResult = applyStoryRewards(gameState, aiText);
 aiText = storyRewardResult.text;
+aiText = removeMalformedRewardTags(aiText);
 
 let rewardMessages = [...storyRewardResult.messages];
 
@@ -3509,7 +3663,18 @@ if (rewardMessages.length > 0) {
     const explicitCombatMatch = aiText.match(/\[전투발생:(.+?)\]/);
 let combatJudgement = { combat: false, target: "" };
 
-if (explicitCombatMatch) {
+if (isSettlementAction(playerChoice) && !hasDirectCombatIntent(playerChoice)) {
+  if (explicitCombatMatch || aiText.includes("전투 시작")) {
+    aiText = await rewriteSettlementScene(gameState, playerChoice, aiText);
+  }
+
+  aiText = aiText.replace(/\[전투발생:.+?\]/g, "").trim();
+
+  combatJudgement = {
+    combat: false,
+    target: ""
+  };
+} else if (explicitCombatMatch) {
   combatJudgement = {
     combat: true,
     target: explicitCombatMatch[1].trim() || "적"
@@ -3523,13 +3688,20 @@ if (explicitCombatMatch) {
   combatJudgement = await judgeCombatScene(aiText, playerChoice);
 }
 
-    if (combatJudgement.combat) {
-      const monsterName = combatJudgement.target || "적";
+if (combatJudgement.combat) {
+  const monsterName = combatJudgement.target || "적";
 
-      await startCombat(gameState, monsterName);
+  aiText = await rewriteCombatIntroScene(
+    gameState,
+    playerChoice,
+    aiText,
+    monsterName
+  );
 
-      aiText = aiText.replace(/\[전투발생:.+?\]/, "").trim();
-      aiText = aiText.replace(/선택지:[\s\S]*/g, "").trim();
+  await startCombat(gameState, monsterName);
+
+  aiText = aiText.replace(/\[전투발생:.+?\]/g, "").trim();
+  aiText = aiText.replace(/선택지:[\s\S]*/g, "").trim();
 
       return res.json({
         text:
