@@ -330,7 +330,67 @@ function findItemFromChoice(gameState, choice) {
   return gameState.inventory.find((item) => item.name === itemName);
 }
 
-function useItem(gameState, choice) {
+async function judgeItemUsageType(gameState, item) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 RPG 아이템 분류 담당자다. 반드시 JSON만 출력한다."
+        },
+        {
+          role: "user",
+          content: `
+아래 아이템이 플레이어가 인벤토리에서 직접 사용하거나 장착할 수 있는 아이템인지 판정해라.
+
+플레이어 상태:
+직업: ${gameState.playerJob}
+현재 목표: ${gameState.playerGoal}
+
+아이템:
+이름: ${item.name}
+타입: ${item.type}
+설명: ${item.description || "설명 없음"}
+
+판정 기준:
+- 체력 회복, 마나 회복, 공격력 증가, 방어력 증가, 마법력 증가, 회복력 증가는 usable이다.
+- 무기, 방어구, 반지, 목걸이, 부적처럼 장착해서 능력치를 올리는 물건은 usable이다.
+- 열쇠, 문서, 편지, 지도, 증표, 단서, 의뢰품, 전달품, 봉인석, 마법석, 수정, 결정, 제물, 유물, 성물처럼 스토리 진행에 필요한 물건은 quest이다.
+- 문을 열기 위해 필요한 물건, 누군가에게 건네야 하는 물건, 제단에 바쳐야 하는 물건, 봉인을 해제하는 물건은 quest이다.
+- quest 아이템은 직접 사용/장착할 수 없다.
+- quest 아이템은 "문에 꽂는다", "누구에게 건넨다", "제단에 바친다" 같은 스토리 행동으로만 사용된다.
+- 애매하면 quest로 둔다.
+- JSON만 출력한다.
+
+형식:
+{
+  "usageType": "usable 또는 quest",
+  "reason": "짧은 이유"
+}
+`
+        }
+      ]
+    });
+
+    const result = parseJson(response.choices[0].message.content, {
+      usageType: "quest",
+      reason: "판정 실패"
+    });
+
+    return {
+      usageType: result.usageType === "usable" ? "usable" : "quest",
+      reason: result.reason || ""
+    };
+  } catch {
+    return {
+      usageType: "quest",
+      reason: "판정 실패"
+    };
+  }
+}
+
+async function useItem(gameState, choice) {
   const item = findItemFromChoice(gameState, choice);
 
   if (!item) {
@@ -339,6 +399,17 @@ function useItem(gameState, choice) {
       text: "사용할 수 있는 아이템이 없다."
     };
   }
+  const usageJudge = await judgeItemUsageType(gameState, item);
+
+if (usageJudge.usageType === "quest") {
+  return {
+    success: false,
+    text:
+      `${item.name}은 직접 사용하거나 장착하는 아이템이 아니다.\n` +
+      `${usageJudge.reason}\n` +
+      `이 아이템은 필요한 상황에서 직접 행동으로 사용해야 한다.`
+  };
+}
 
   const itemText = `${item.name} ${item.description || ""}`;
 
@@ -979,7 +1050,7 @@ async function handleCombat(gameState, choice) {
   }
 
   if (choice.includes(" 사용")) {
-    const result = useItem(gameState, choice);
+    const result = await useItem(gameState, choice);
     text += result.text + "\n";
 
     if (!result.success) {
@@ -3079,16 +3150,24 @@ if (gameState.inn.active) {
 }
 
     if (playerChoice.includes(" 사용")) {
-      const result = useItem(gameState, playerChoice);
+  const result = await useItem(gameState, playerChoice);
 
-      return res.json({
-        text: "설명:\n" + result.text,
-        choices: ["주변을 살핀다", "길을 떠난다", "상점을 찾는다"],
-        dice: "-",
-        turn: gameState.turn,
-        state: gameState
-      });
-    }
+  const previousChoices =
+    Array.isArray(gameState.lastChoices) && gameState.lastChoices.length > 0
+      ? gameState.lastChoices
+      : ["주변을 살핀다", "길을 떠난다", "상점을 찾는다"];
+
+  return res.json({
+    text:
+      "설명:\n" +
+      result.text +
+      "\n\n이전 선택지를 계속 선택할 수 있다.",
+    choices: previousChoices,
+    dice: "-",
+    turn: gameState.turn,
+    state: gameState
+  });
+}
 
     const hostileToMerchant =
       playerChoice.includes("훔치") ||
