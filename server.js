@@ -634,32 +634,57 @@ ${playerJob}
 async function generateMonsterStats(monsterName, gameState) {
   const turn = gameState?.turn || 1;
 
-  let hpMin = 6;
-  let hpMax = 24;
-  let attackMin = 1;
-  let attackMax = 5;
+  let hpMin = 16;
+let hpMax = 34;
+let attackMin = 4;
+let attackMax = 8;
 
-  if (turn >= 11 && turn <= 25) {
-    hpMin = 12;
-    hpMax = 40;
-    attackMin = 2;
-    attackMax = 7;
-  }
+if (turn >= 11 && turn <= 25) {
+  hpMin = 28;
+  hpMax = 58;
+  attackMin = 6;
+  attackMax = 11;
+}
 
-  if (turn >= 26 && turn <= 40) {
-    hpMin = 20;
-    hpMax = 60;
-    attackMin = 3;
-    attackMax = 9;
-  }
+if (turn >= 26 && turn <= 40) {
+  hpMin = 45;
+  hpMax = 90;
+  attackMin = 8;
+  attackMax = 14;
+}
 
-  if (turn >= 41) {
-    hpMin = 30;
-    hpMax = 85;
-    attackMin = 4;
-    attackMax = 12;
-  }
+if (turn >= 41) {
+  hpMin = 70;
+  hpMax = 130;
+  attackMin = 10;
+  attackMax = 18;
+}
+const strongMonsterWords = [
+  "보스",
+  "수호자",
+  "기사",
+  "대장",
+  "우두머리",
+  "괴물",
+  "마수",
+  "악마",
+  "마법사",
+  "정예",
+  "거인",
+  "골렘",
+  "무리"
+];
 
+const isStrongMonster = strongMonsterWords.some((word) =>
+  String(monsterName || "").includes(word)
+);
+
+if (isStrongMonster) {
+  hpMin = Math.floor(hpMin * 1.4);
+  hpMax = Math.floor(hpMax * 1.5);
+  attackMin = Math.floor(attackMin * 1.2);
+  attackMax = Math.floor(attackMax * 1.25);
+}
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4.1-mini",
@@ -1186,7 +1211,7 @@ async function handleCombat(gameState, choice) {
   if (enemyCanCounter) {
     const enemyDamage = Math.max(
   1,
-  Math.ceil(combat.monsterAttack * 0.75) - gameState.defenseBonus
+  combat.monsterAttack - Math.floor(gameState.defenseBonus / 2)
 );
 
     gameState.hp -= enemyDamage;
@@ -3279,6 +3304,13 @@ ${aiText}
 - 아이템 type은 hp, mp, attack, defense, magic, heal 중 하나만 쓴다.
 - 회복 음식, 약초, 차, 포션은 hp 또는 mp로 둔다.
 - 무기, 목걸이, 반지, 부적은 attack, defense, magic, heal 중 적절히 둔다.
+- 장면에서 플레이어가 아이템을 손에 쥐었다, 획득했다, 챙겼다, 주머니에 넣었다, 보관했다, 가져갔다, 회수했다, 품에 넣었다고 나오면 itemsGained에 넣는다.
+- 쪽지, 문서, 열쇠, 지도, 증표, 단서, 주머니, 수정, 부적, 병은 전투 장비가 아니더라도 스토리 진행용 아이템으로 획득될 수 있다.
+- 단순히 아이템을 보았다, 발견했다, 위치를 알았다, 누군가가 가지고 있다고 들었다는 것만으로는 itemsGained에 넣지 않는다.
+- 하지만 플레이어 행동이나 장면 설명상 그 물건을 실제로 챙긴 것이 명확하면 itemsGained에 넣는다.
+- 이미 현재 인벤토리에 같은 이름의 고유 진행용 아이템이 있고, 장면이 같은 물건을 다시 확인한 것뿐이라면 itemsGained에 넣지 않는다.
+- 단, 포션, 약초, 화살, 식량, 재료, 소모품처럼 여러 개 소지할 수 있는 아이템은 같은 이름이 이미 있어도 추가 획득이 명확하면 itemsGained에 넣는다.
+- 단순히 기존 인벤토리의 아이템을 확인하거나 꺼내 본 것뿐이면 itemsGained에 넣지 않는다.
 - JSON만 출력한다.
 
 형식:
@@ -3548,6 +3580,13 @@ app.post("/next", async (req, res) => {
     const { choice, sessionId } = req.body;
     const gameState = getGameState(sessionId);
     let playerChoice = choice || "주변을 살핀다";
+    if (
+  playerChoice === "게임 시작" ||
+  playerChoice.includes("게임 시작")
+) {
+  playerChoice =
+    "캐릭터의 목표와 세계관에 맞는 자연스러운 첫 사건을 시작한다. 단, 장면 안에서 게임 시작이라는 표현은 쓰지 않는다.";
+}
 
     if (playerChoice.startsWith("/dev turn ")) {
       const targetTurn = Number(playerChoice.replace("/dev turn ", ""));
@@ -3778,7 +3817,8 @@ ${storyPhase}
 HP: ${gameState.hp}/${gameState.maxHp}
 MP: ${gameState.mp}/${gameState.maxMp}
 골드: ${gameState.gold}
-인벤토리: ${inventoryText(gameState)}
+인벤토리:
+${detailedInventoryText(gameState)}
 
 현재 턴:
 ${gameState.turn}/${gameState.maxTurn}
@@ -3937,6 +3977,10 @@ ${keywordEventDirective}
 - 사용되지 않은 진행용 아이템이 여러 개 쌓여 있으면 새로운 진행용 아이템 생성을 줄이고, 기존 아이템을 해석하거나 사용하는 사건을 우선 배치한다.
 - 같은 역할의 진행용 아이템을 반복해서 만들지 않는다. 예: 문을 여는 수정이 이미 있으면 또 다른 문 여는 결정이나 열쇠를 새로 만들지 않는다.
 - 기존 진행용 아이템이 현재 사건과 맞지 않으면 왜 아직 쓸 수 없는지, 어떤 조건이 필요한지 명확히 남긴다.
+- 플레이어가 장면 안에서 쪽지, 문서, 열쇠, 병, 주머니, 수정, 부적, 지도, 증표, 단서 아이템을 발견하고 손에 쥐거나 챙기거나 주머니에 넣거나 보관하면 실제 아이템 획득으로 처리한다.
+- 단순히 멀리서 보았다, 존재를 알았다, 소문을 들었다, 위치를 확인했다는 것만으로는 아이템 획득 처리하지 않는다.
+- 플레이어가 직접 “챙긴다”, “획득한다”, “가져간다”, “주머니에 넣는다”, “손에 쥔다”, “보관한다”라고 입력했으면 반드시 [아이템획득:이름:type:effectValue:consumable:설명] 형식을 출력한다.
+- 쪽지, 문서, 열쇠, 지도, 증표, 단서, 주머니, 수정, 부적처럼 스토리 진행에 필요한 물건은 장비나 회복템이 아니라 진행용 아이템처럼 묘사한다.
 
 [태그 형식]
 - 대괄호 태그에는 반드시 정해진 형식만 사용한다.
@@ -3977,6 +4021,9 @@ ${keywordEventDirective}
 - 분위기와 대사를 섞는다.
 - 선택지는 반드시 3개.
 - 출력 형식을 지킨다.
+- 첫 장면에서 “게임 시작”, “게임이 시작되었다”, “시작 버튼”, “플레이어가 시작했다” 같은 게임 바깥 표현을 쓰지 않는다.
+- 첫 장면은 캐릭터가 이미 세계 안에 있는 것처럼 자연스럽게 시작한다.
+- 시작 장면은 장소, 현재 상황, 첫 사건, 목표와 연결되는 단서 중 하나로 시작한다.
 출력 형식:
 
 설명:
