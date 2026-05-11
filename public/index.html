@@ -19,7 +19,9 @@
       background: #fafafa;
     }
 
-    h1, h2 {
+    h1,
+    h2,
+    h3 {
       margin-top: 0;
     }
 
@@ -33,6 +35,11 @@
       margin-bottom: 18px;
       border-radius: 8px;
       background: #fff;
+    }
+
+    .start-panel {
+      max-width: 820px;
+      margin: 0 auto;
     }
 
     .game-grid {
@@ -63,11 +70,24 @@
       border: 1px solid #aaa;
       border-radius: 6px;
       background: #fff;
+      color: #222;
     }
 
     textarea {
       resize: vertical;
-      min-height: 80px;
+      min-height: 90px;
+    }
+
+    #worldInput {
+      min-height: 110px;
+    }
+
+    #personalityInput {
+      min-height: 150px;
+    }
+
+    #goalInput {
+      min-height: 100px;
     }
 
     button {
@@ -89,7 +109,7 @@
       word-break: keep-all;
       border: 1px solid #aaa;
       padding: 20px;
-      min-height: 320px;
+      min-height: 360px;
       background: #f8f8f8;
     }
 
@@ -141,6 +161,7 @@
     .small-text {
       font-size: 14px;
       color: #555;
+      margin-top: 4px;
     }
 
     .right-column {
@@ -153,17 +174,38 @@
         position: static;
       }
     }
+
+    .start-guide {
+      background: #f8f8f8;
+      border: 1px solid #ddd;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+
+    .example-box {
+      font-size: 14px;
+      color: #555;
+      background: #fafafa;
+      border: 1px dashed #bbb;
+      padding: 10px;
+      border-radius: 6px;
+      margin-top: 6px;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 
 <body>
-  <div id="startScreen" class="panel">
+  <div id="startScreen" class="panel start-panel">
     <h1>AI TRPG</h1>
 
-    <p>
+    <div class="start-guide">
       이곳은 흔히 아는 몬스터가 나타나는 판타지 RPG의 세계이며,
       당신은 중대한 목표를 가지고 있습니다.
-    </p>
+      <br>
+      이름, 직업, 세계관, 캐릭터 설정, 목표를 정하면 그 내용을 기준으로 이야기가 진행됩니다.
+    </div>
 
     <div class="section-gap">
       <label for="nameInput">플레이어 이름</label>
@@ -172,25 +214,37 @@
 
     <div class="section-gap">
       <label for="jobInput">직업</label>
-      <input id="jobInput" placeholder="예: 마법사, 광대, 바나나 판매상">
+      <input id="jobInput" placeholder="예: 마법사, 광대, 기사, 요리사, 바나나 판매상">
     </div>
 
     <div class="section-gap">
       <label for="worldInput">세계관 설명</label>
       <textarea id="worldInput">이곳은 흔히 아는 몬스터가 나타나는 판타지 RPG의 세계이며, 당신은 중대한 목표를 가지고 있습니다.</textarea>
       <div class="small-text">
-        세계관을 바꾸고 싶으면 이 문장을 직접 수정하면 돼.
+        세계관을 바꾸고 싶으면 이 문장을 직접 수정하면 됩니다.
       </div>
     </div>
 
     <div class="section-gap">
-      <label for="personalityInput">캐릭터 성격</label>
-      <textarea id="personalityInput" placeholder="예: 온순하고 착하다 / 싸가지 없고 충동적이다 / 냉정하고 계산적이다"></textarea>
+      <label for="personalityInput">캐릭터 설정</label>
+      <textarea id="personalityInput" placeholder="성별, 나이, 키, 외형, 성격, 말투, 습관, 가치관 등을 적어주세요."></textarea>
+      <div class="example-box">예:
+성별: 여성
+나이: 24세
+키: 168cm
+외형: 검은 머리, 붉은 눈
+성격: 냉정하고 말수가 적지만 약속은 반드시 지킨다
+말투: 짧고 단정하게 말한다</div>
     </div>
 
     <div class="section-gap">
       <label for="goalInput">중대한 목표</label>
       <textarea id="goalInput" placeholder="당신의 중대한 목표는 무엇입니까?"></textarea>
+      <div class="example-box">예:
+납치된 동생을 구출한다.
+왕국 최고의 요리 대회에서 우승한다.
+라이벌을 꺾고 검술 대회 정상에 오른다.
+저주받은 마을의 진실을 밝혀낸다.</div>
     </div>
 
     <div class="section-gap">

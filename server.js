@@ -97,6 +97,63 @@ activeSceneGoal: "",
 lastSceneSummary: "",
 sceneGoalStallCount: 0,
 
+recentEventSeeds: [],
+lastPlayerChoice: "",
+sameChoiceTextCount: 0,
+
+storyMemory: {
+  mainGoal: "",
+  goalStatus: "진행 중",
+  currentObjective: "",
+
+  currentLocation: "",
+  intendedDestination: "",
+  travelRoute: [],
+  travelPurpose: "",
+
+  characters: [],
+  companions: [],
+
+  rescuedTargets: [],
+  missingTargets: [],
+
+  relationships: [],
+  romance: [],
+  marriage: [],
+  family: [],
+  children: [],
+
+  friends: [],
+  rivals: [],
+
+  quests: [],
+  promises: [],
+  training: [],
+  competitions: [],
+
+  importantFacts: [],
+  unresolvedThreads: [],
+  completedThreads: [],
+  forbiddenContradictions: []
+},
+
+keeper: {
+  mainGoalLockedUntilTurn: 35,
+  finaleStartTurn: 41,
+  recentEventTypes: [],
+  currentEventType: "",
+  currentChapterGoal: "",
+  goalProgressStage: "도입",
+  earlyGoalResolutionCount: 0,
+  majorObstacles: [],
+  revealedTruths: []
+},
+ended: false,
+
+recentEventSeeds: [],
+lastPlayerChoice: "",
+sameChoiceTextCount: 0,
+
 ended: false,
     combat: {
       active: false,
@@ -178,7 +235,118 @@ function inventoryText(gameState) {
     })
     .join(", ");
 }
+function uniqueList(list, max = 12) {
+  return [...new Set(
+    (Array.isArray(list) ? list : [])
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+  )].slice(-max);
+}
 
+function createEmptyStoryMemory() {
+  return {
+  mainGoal: "",
+  goalStatus: "진행 중",
+  currentObjective: "",
+
+  currentLocation: "",
+  intendedDestination: "",
+  travelRoute: [],
+  travelPurpose: "",
+
+  characters: [],
+    companions: [],
+
+    rescuedTargets: [],
+    missingTargets: [],
+
+    relationships: [],
+    romance: [],
+    marriage: [],
+    family: [],
+    children: [],
+
+    friends: [],
+    rivals: [],
+
+    quests: [],
+    promises: [],
+    training: [],
+    competitions: [],
+
+    importantFacts: [],
+    unresolvedThreads: [],
+    completedThreads: [],
+    forbiddenContradictions: []
+  };
+}
+
+function ensureStoryMemory(gameState) {
+  if (!gameState.storyMemory) {
+    gameState.storyMemory = createEmptyStoryMemory();
+  }
+
+  const memory = gameState.storyMemory;
+  const empty = createEmptyStoryMemory();
+
+  Object.keys(empty).forEach((key) => {
+    if (memory[key] === undefined) {
+      memory[key] = empty[key];
+    }
+  });
+
+  return memory;
+}
+
+function storyMemoryText(gameState) {
+  const memory = ensureStoryMemory(gameState);
+
+  return `
+장기 기억:
+- 주 목표: ${memory.mainGoal || gameState.playerGoal || "미정"}
+- 목표 상태: ${memory.goalStatus || "진행 중"}
+- 현재 목적: ${memory.currentObjective || "미정"}
+- 현재 위치: ${memory.currentLocation || "미정"}
+- 목적지: ${memory.intendedDestination || "미정"}
+- 이동 목적: ${memory.travelPurpose || "미정"}
+- 이동 경로: ${uniqueList(memory.travelRoute).join(" → ") || "없음"}
+
+인물/동행:
+- 주요 인물: ${uniqueList(memory.characters).join(", ") || "없음"}
+- 동행자: ${uniqueList(memory.companions).join(", ") || "없음"}
+
+구출/실종:
+- 구출 완료 대상: ${uniqueList(memory.rescuedTargets).join(", ") || "없음"}
+- 실종/납치/수색 대상: ${uniqueList(memory.missingTargets).join(", ") || "없음"}
+
+관계:
+- 관계 변화: ${uniqueList(memory.relationships).join(", ") || "없음"}
+- 연애: ${uniqueList(memory.romance).join(", ") || "없음"}
+- 결혼: ${uniqueList(memory.marriage).join(", ") || "없음"}
+- 가족/육아: ${uniqueList(memory.family).join(", ") || "없음"}
+- 자녀/아이 관련: ${uniqueList(memory.children).join(", ") || "없음"}
+- 친구: ${uniqueList(memory.friends).join(", ") || "없음"}
+- 라이벌: ${uniqueList(memory.rivals).join(", ") || "없음"}
+
+진행 요소:
+- 퀘스트: ${uniqueList(memory.quests).join(", ") || "없음"}
+- 약속: ${uniqueList(memory.promises).join(", ") || "없음"}
+- 훈련: ${uniqueList(memory.training).join(", ") || "없음"}
+- 대회: ${uniqueList(memory.competitions).join(", ") || "없음"}
+
+중요 기록:
+${uniqueList(memory.importantFacts, 20).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
+
+남은 문제:
+${uniqueList(memory.unresolvedThreads, 15).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
+
+완료된 사건:
+${uniqueList(memory.completedThreads, 15).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
+
+절대 모순 금지:
+${uniqueList(memory.forbiddenContradictions, 15).map((fact) => `  - ${fact}`).join("\n") || "  - 없음"}
+`;
+}
 function addItem(gameState, item) {
   const normalized = normalizeItem(item);
 
@@ -1079,7 +1247,470 @@ function buildAntiLoopDirective(gameState, playerChoice) {
 
   return "";
 }
+function includesAny(text, words) {
+  return words.some((word) => text.includes(word));
+}
 
+function pickRandom(list) {
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+function extractPlayerKeywords(choice) {
+  const text = String(choice || "");
+
+  const fixedKeywords = [
+    "봉인", "의식", "결계", "마법진", "해제", "파괴",
+    "도둑", "훔치", "강탈", "골드", "보수", "임금",
+    "수호자", "상인", "여관", "상점", "마을", "던전",
+    "공격", "처치", "도망", "탈출", "설득", "협상",
+    "마법", "불", "잠", "기", "제물", "문", "열쇠"
+  ].filter((keyword) => text.includes(keyword));
+
+  const stopWords = [
+    "그리고", "하지만", "그러나", "그래서", "나는", "내가",
+    "한다", "했다", "간다", "본다", "한다면", "이제",
+    "다시", "계속", "그냥", "일단", "주변", "상황"
+  ];
+
+  const words = text
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter((word) => word.length >= 2)
+    .filter((word) => !stopWords.includes(word));
+
+  return [...new Set([...fixedKeywords, ...words])].slice(0, 8);
+}
+
+function rememberEventSeed(gameState, seed) {
+  if (!gameState.recentEventSeeds) {
+    gameState.recentEventSeeds = [];
+  }
+
+  gameState.recentEventSeeds.push(seed);
+  gameState.recentEventSeeds = gameState.recentEventSeeds.slice(-6);
+}
+
+function buildKeywordEventDirective(gameState, playerChoice) {
+  const text = String(playerChoice || "").trim();
+  const keywords = extractPlayerKeywords(text);
+
+  if (gameState.lastPlayerChoice === text) {
+    gameState.sameChoiceTextCount += 1;
+  } else {
+    gameState.sameChoiceTextCount = 0;
+  }
+
+  gameState.lastPlayerChoice = text;
+
+  const eventSeeds = [];
+
+  if (includesAny(text, ["봉인", "의식", "결계", "마법진", "해제", "파괴", "기"])) {
+    eventSeeds.push(
+      "봉인 대상 내부에서 예상하지 못한 목소리가 들려온다",
+      "의식에 필요한 마지막 조건이 구체적으로 드러난다",
+      "봉인하려던 힘이 주변 사물 하나를 변질시킨다",
+      "의식을 방해하는 제 3자가 난입한다",
+      "봉인의 대가로 잃어야 할 것이 분명히 제시된다",
+      "기운이 모이는 대신 균열이 열리며 다른 선택지가 생긴다"
+    );
+  }
+
+  if (includesAny(text, ["훔치", "강탈", "뺏", "빼앗", "도둑", "털"])) {
+    eventSeeds.push(
+      "도난 대상에게 숨겨진 표식이나 추적 장치가 있다",
+      "훔친 물건 때문에 새로운 추격자가 붙는다",
+      "주변 목격자가 거래를 제안한다",
+      "훔친 물건 안에서 예상 밖의 단서가 나온다",
+      "피해자가 단순한 민간인이 아니라 다른 세력과 연결되어 있다"
+    );
+  }
+
+  if (includesAny(text, ["보수", "임금", "일당", "골드", "돈", "대금"])) {
+    eventSeeds.push(
+      "보수를 미루던 의뢰인이 대신 위험한 정보를 건넨다",
+      "보수 지급 현장에서 다른 채권자가 끼어든다",
+      "약속된 금액보다 적은 돈을 주려는 사기가 드러난다",
+      "정당한 보수를 받는 대신 추가 의뢰가 열린다",
+      "돈을 받는 순간 그 돈의 출처가 문제를 일으킨다"
+    );
+  }
+
+  if (includesAny(text, ["수호자", "합심", "동맹", "협력", "도움"])) {
+    eventSeeds.push(
+      "수호자가 협력 조건으로 즉시 해결 가능한 시험을 건다",
+      "수호자의 적이 먼저 협상장을 습격한다",
+      "수호자가 숨기던 약점이 드러난다",
+      "협력 대신 서로의 목적이 충돌한다",
+      "수호자가 플레이어의 성격을 시험하는 선택을 던진다"
+    );
+  }
+
+  if (includesAny(text, ["떠나", "이동", "나간", "도망", "탈출", "길"])) {
+    eventSeeds.push(
+      "이동한 장소에서 이전 상황과 다른 새 인물이 기다린다",
+      "길목이 막혀 우회로와 위험한 지름길 중 하나를 골라야 한다",
+      "도망친 뒤에도 따라오는 흔적이 발견된다",
+      "새 장소에서 목표와 관련된 단서가 바로 나타난다",
+      "이동 중 예상치 못한 거래나 구조 요청을 마주친다"
+    );
+  }
+
+  if (includesAny(text, ["말", "대화", "설득", "협상", "묻", "질문"])) {
+    eventSeeds.push(
+      "상대가 대답하는 대신 숨기던 조건을 제시한다",
+      "대화 도중 거짓말을 알아챌 단서가 나온다",
+      "협상 상대가 제 3자의 이름을 꺼낸다",
+      "말 한마디 때문에 주변 인물의 태도가 갈라진다",
+      "상대가 정보를 주는 대신 즉시 행동을 요구한다"
+    );
+  }
+
+  if (includesAny(text, ["공격", "처치", "죽", "베", "찌르", "일격", "불태우"])) {
+    eventSeeds.push(
+      "공격의 결과로 적이 쓰러지거나 도망치며 상황이 끝난다",
+      "공격이 성공하지만 그 대가로 주변 환경이 위험해진다",
+      "적이 반격 대신 항복 조건을 내민다",
+      "강한 공격이 새로운 적의 주의를 끈다",
+      "쓰러진 대상에게서 목표와 관련된 단서가 나온다"
+    );
+  }
+
+  if (eventSeeds.length === 0) {
+    eventSeeds.push(
+      "새로운 인물이 등장해 플레이어의 목표와 연결된 정보를 준다",
+      "장소가 바뀌거나 상황이 강제로 다음 국면으로 넘어간다",
+      "작은 보상이나 손실이 발생해 상태가 실제로 변한다",
+      "목표와 관련된 단서가 하나 드러난다",
+      "위험한 시간제한이 생긴다",
+      "선택지 중 하나가 명확한 대가를 요구한다"
+    );
+  }
+
+  const recent = gameState.recentEventSeeds || [];
+  const candidates = eventSeeds.filter((seed) => !recent.includes(seed));
+  const selectedEvent = pickRandom(candidates.length > 0 ? candidates : eventSeeds);
+
+  rememberEventSeed(gameState, selectedEvent);
+
+  return `
+새 사건 생성 지시:
+- 이번 턴의 핵심 단어: ${keywords.length > 0 ? keywords.join(", ") : "없음"}
+- 이번 턴에 반드시 반영할 새 사건: ${selectedEvent}
+- 플레이어가 직접 입력한 행동의 핵심 단어를 중심으로 장면을 전개한다.
+- 이전 장면과 같은 장소, 같은 대치, 같은 대사, 같은 준비 상태를 반복하지 않는다.
+- 플레이어가 쓴 문장을 주인공이 그대로 다시 외치게 하지 말고, 그 행동의 결과와 주변 반응을 보여준다.
+- 같은 말을 두 턴 연속 반복하지 않는다.
+- 이번 턴에는 새 인물, 새 단서, 새 장애물, 새 보상, 새 손실, 새 장소, 새 위협 중 최소 하나를 반드시 넣는다.
+- 사건이 커지더라도 플레이어의 원래 행동 키워드와 연결되어야 한다.
+${gameState.sameChoiceTextCount >= 1 ? "- 플레이어가 비슷한 행동을 반복했으므로, 이번에는 반드시 결과를 확정하고 다음 국면으로 넘긴다." : ""}
+`;
+}
+
+function textTokenSet(text) {
+  const stopWords = [
+    "설명", "선택지", "그리고", "하지만", "그러나", "이번",
+    "상황", "플레이어", "무엇", "한다", "있다", "없다",
+    "된다", "했다", "한다면", "그는", "그녀는", "주변"
+  ];
+
+  return new Set(
+    String(text || "")
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .map((word) => word.trim())
+      .filter((word) => word.length >= 2)
+      .filter((word) => !stopWords.includes(word))
+  );
+}
+
+function sceneSimilarity(a, b) {
+  const setA = textTokenSet(a);
+  const setB = textTokenSet(b);
+
+  if (setA.size === 0 || setB.size === 0) {
+    return 0;
+  }
+
+  let intersection = 0;
+
+  for (const word of setA) {
+    if (setB.has(word)) {
+      intersection += 1;
+    }
+  }
+
+  const union = new Set([...setA, ...setB]).size;
+
+  return intersection / union;
+}
+
+function isSceneTooSimilar(gameState, aiText) {
+  if (!gameState.lastScene) {
+    return false;
+  }
+
+  const score = sceneSimilarity(gameState.lastScene, aiText);
+
+  if (score >= 0.42) {
+    return true;
+  }
+
+  if (score >= 0.32 && gameState.sameIntentCount >= 1) {
+    return true;
+  }
+
+  return false;
+}
+
+async function rewriteTooSimilarScene(gameState, playerChoice, aiText) {
+  try {
+    const keywordDirective = buildKeywordEventDirective(gameState, playerChoice);
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 반복되는 RPG 장면을 새 사건 중심으로 다시 쓰는 편집자다."
+        },
+        {
+          role: "user",
+          content: `
+아래 장면은 직전 장면과 너무 비슷하다.
+반드시 새 사건을 넣어서 다시 써라.
+
+플레이어:
+이름: ${gameState.playerName}
+직업: ${gameState.playerJob}
+캐릭터 설정: ${gameState.playerPersonality}
+목표: ${gameState.playerGoal}
+
+플레이어 행동:
+${playerChoice}
+
+직전 장면:
+${gameState.lastScene || "없음"}
+
+반복된 이번 장면:
+${aiText}
+
+${keywordDirective}
+
+수정 규칙:
+- 주인공이 같은 대사를 다시 외치게 하지 않는다.
+- 같은 장소에서 같은 준비만 반복하지 않는다.
+- 플레이어 행동 키워드를 중심으로 새 인물, 새 장소, 새 단서, 새 장애물, 새 대가 중 하나를 넣는다.
+- 이번 장면 안에서 반드시 상황이 전진해야 한다.
+- 봉인/의식/기 모으기 상황이면 성공, 실패, 일부 성공, 대가, 조건 공개, 전투 발생 중 하나로 넘긴다.
+- 전투가 필요하면 마지막 줄에 [전투발생:전투대상이름]을 붙인다.
+- 골드나 아이템 변화가 있으면 기존 태그 형식을 사용한다.
+- 선택지는 3개만 만든다.
+
+출력 형식:
+
+설명:
+(새 사건이 들어간 설명)
+
+선택지:
+1. (선택지)
+2. (선택지)
+3. (선택지)
+`
+        }
+      ]
+    });
+
+    return response.choices[0].message.content;
+  } catch {
+    return aiText;
+  }
+}
+function ensureKeeper(gameState) {
+  if (!gameState.keeper) {
+    gameState.keeper = {
+      mainGoalLockedUntilTurn: 35,
+      finaleStartTurn: 41,
+      recentEventTypes: [],
+      currentEventType: "",
+      currentChapterGoal: "",
+      goalProgressStage: "도입",
+      earlyGoalResolutionCount: 0,
+      majorObstacles: [],
+      revealedTruths: []
+    };
+  }
+
+  return gameState.keeper;
+}
+
+function extractKeeperKeywords(choice) {
+  const text = String(choice || "");
+
+  const keywords = [
+    "구출", "연애", "결혼", "육아", "훈련", "대회", "친구", "라이벌",
+    "퀘스트", "약속", "탐험", "발견", "싸움", "전투", "증거", "요리",
+    "퀴즈", "봉인", "의식", "마법", "수호자", "상인", "여관", "던전",
+    "도망", "추적", "탈출", "보수", "골드", "훔치", "동행", "배신"
+  ].filter((keyword) => text.includes(keyword));
+
+  const words = text
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter((word) => word.length >= 2)
+    .filter((word) => !["그리고", "하지만", "나는", "내가", "한다", "한다면", "그냥", "다시"].includes(word));
+
+  return [...new Set([...keywords, ...words])].slice(0, 8);
+}
+
+function pickKeeperEventType(gameState, playerChoice) {
+  const keeper = ensureKeeper(gameState);
+  const text = String(playerChoice || "");
+
+  const eventPool = [
+    "탐험",
+    "발견",
+    "전투",
+    "퀘스트",
+    "증거 수집",
+    "요리 또는 제작",
+    "수수께끼",
+    "구출",
+    "관계 변화",
+    "훈련",
+    "대회",
+    "거래",
+    "추적",
+    "라이벌 등장",
+    "위기",
+    "휴식 후 사건"
+  ];
+
+  let preferred = [];
+
+  if (text.includes("구출") || text.includes("찾")) {
+    preferred = ["구출", "추적", "증거 수집", "위기", "발견"];
+  } else if (text.includes("연애") || text.includes("고백") || text.includes("사랑")) {
+    preferred = ["관계 변화", "수수께끼", "위기", "퀘스트", "발견"];
+  } else if (text.includes("훈련") || text.includes("수련")) {
+    preferred = ["훈련", "대회", "라이벌 등장", "발견", "위기"];
+  } else if (text.includes("대회") || text.includes("시합")) {
+    preferred = ["대회", "라이벌 등장", "훈련", "증거 수집", "위기"];
+  } else if (text.includes("요리") || text.includes("만들")) {
+    preferred = ["요리 또는 제작", "거래", "발견", "퀘스트", "위기"];
+  } else if (text.includes("증거") || text.includes("조사")) {
+    preferred = ["증거 수집", "발견", "추적", "수수께끼", "위기"];
+  } else if (text.includes("싸움") || text.includes("공격") || text.includes("처치")) {
+    preferred = ["전투", "위기", "라이벌 등장", "발견", "증거 수집"];
+  } else {
+    preferred = eventPool;
+  }
+
+  const recent = keeper.recentEventTypes || [];
+  const candidates = preferred.filter((type) => !recent.includes(type));
+  const finalCandidates = candidates.length > 0 ? candidates : eventPool.filter((type) => !recent.includes(type));
+  const list = finalCandidates.length > 0 ? finalCandidates : eventPool;
+
+  const selected = list[Math.floor(Math.random() * list.length)];
+
+  keeper.currentEventType = selected;
+  keeper.recentEventTypes.push(selected);
+  keeper.recentEventTypes = keeper.recentEventTypes.slice(-4);
+
+  return selected;
+}
+
+function getStoryPhaseDirective(gameState) {
+  const turn = gameState.turn;
+  const goal = gameState.playerGoal || "미정";
+
+  if (turn <= 10) {
+    return `
+현재 구간: 기
+- 최종 목표 "${goal}"에 바로 도달시키지 않는다.
+- 목표의 존재, 단서, 첫 방해물, 조력자, 위험을 배치한다.
+- 플레이어가 목표에 너무 빨리 접근하면 문턱, 조건, 열쇠, 시험, 방해꾼을 만든다.
+- 이 구간의 목표는 "출발과 문제 인식"이다.
+`;
+  }
+
+  if (turn <= 25) {
+    return `
+현재 구간: 승
+- 최종 목표를 향해 실제 진전을 준다.
+- 단서 획득, 중간 퀘스트, 관계 변화, 첫 승리, 첫 실패를 배치한다.
+- 목표를 완전히 해결하지 말고, 해결에 필요한 조건을 1개씩 드러낸다.
+- 이 구간의 목표는 "중간 목표 달성과 세계 확장"이다.
+`;
+  }
+
+  if (turn <= 40) {
+    return `
+현재 구간: 전
+- 목표의 진실, 배후, 강한 방해자, 반전, 대가를 드러낸다.
+- 플레이어가 목표에 도달할 수는 있지만, 완전한 엔딩은 아직 이르다.
+- 목표를 달성했다면 즉시 후속 문제를 만든다.
+- 이 구간의 목표는 "결정적 충돌과 큰 전환"이다.
+`;
+  }
+
+  return `
+현재 구간: 결
+- 이제 최종 목표 해결을 허용한다.
+- 이전에 쌓은 단서, 관계, 약속, 라이벌, 퀘스트를 회수한다.
+- 플레이어 선택에 따라 성공, 실패, 희생, 타협, 새 출발 중 하나로 마무리한다.
+- 이 구간의 목표는 "결말과 정산"이다.
+`;
+}
+
+function buildKeeperDirective(gameState, playerChoice) {
+  const keeper = ensureKeeper(gameState);
+  const selectedEventType = pickKeeperEventType(gameState, playerChoice);
+  const keywords = extractKeeperKeywords(playerChoice);
+  const phaseDirective = getStoryPhaseDirective(gameState);
+  const turn = gameState.turn;
+  const goal = gameState.playerGoal || "미정";
+
+  return `
+키퍼 진행 지시:
+${phaseDirective}
+
+이번 턴 강제 사건 종류:
+- ${selectedEventType}
+
+플레이어 입력 핵심 단어:
+- ${keywords.length > 0 ? keywords.join(", ") : "없음"}
+
+진행 원칙:
+- 이번 장면에는 반드시 "${selectedEventType}" 성격의 새 사건을 넣는다.
+- 플레이어가 직접 입력한 핵심 단어를 장면의 중심 원인으로 삼는다.
+- 같은 사건 종류를 2턴 연속 반복하지 않는다.
+- 같은 대사, 같은 준비, 같은 대치, 같은 설명을 반복하지 않는다.
+- 플레이어가 한 행동은 말로만 반복하지 말고 결과, 반응, 대가, 단서 중 하나로 이어진다.
+- 장면마다 새 인물, 새 단서, 새 장애물, 새 보상, 새 손실, 새 장소, 새 위협 중 최소 하나를 넣는다.
+
+최종 목표 관리:
+- 플레이어의 최종 목표는 "${goal}"이다.
+- ${keeper.mainGoalLockedUntilTurn}턴 전에는 최종 목표를 너무 쉽게 완전 해결하지 않는다.
+- 단, 플레이어가 목표에 접근한 보람은 있어야 하므로 단서, 부분 성공, 임시 구출, 조건 달성, 조력자 확보 중 하나는 준다.
+- 최종 목표에 너무 일찍 도달한 경우, 그것을 완전한 끝으로 처리하지 말고 다음 국면으로 전환한다.
+- 구출 목표라면 구출 후에도 탈출, 보호, 치료, 배후 추적, 추격자, 배신자, 안전한 귀환 같은 후속 문제가 생길 수 있다.
+- 단, 구출한 대상을 아무 설명 없이 없는 사람처럼 취급하지 않는다.
+- 재납치가 필요하면 반드시 장면 안에서 명확히 납치 과정을 보여준다.
+- 연애 목표라면 고백 성공 후에도 신뢰, 경쟁자, 가족 반대, 약속, 위기, 관계 유지 문제로 이어진다.
+- 훈련 목표라면 기술 습득 후 시험, 실전, 대회, 라이벌, 부작용으로 이어진다.
+- 대회 목표라면 예선, 본선, 부정행위, 라이벌, 결승, 후폭풍으로 이어진다.
+- 퀘스트 목표라면 완료 후 보상, 배후, 후속 의뢰, 선택의 대가로 이어진다.
+- 약속 목표라면 약속 이행, 지연, 배신, 조건 변경, 증인, 보상으로 이어진다.
+
+금지:
+- 최종 목표를 초반에 끝내고 남은 턴을 의미 없이 소비하지 않는다.
+- 목표가 끝났다면 즉시 후속 목표를 만든다.
+- “아직 준비가 부족하다”, “기운이 더 모였다”, “무엇을 할까”만으로 턴을 끝내지 않는다.
+- 같은 인물이 같은 말을 반복하게 하지 않는다.
+`;
+}
 async function rewriteStalledScene(gameState, playerChoice, aiText) {
   try {
     const response = await openai.chat.completions.create({
@@ -1098,7 +1729,7 @@ async function rewriteStalledScene(gameState, playerChoice, aiText) {
 플레이어:
 이름: ${gameState.playerName}
 직업: ${gameState.playerJob}
-성격: ${gameState.playerPersonality}
+캐릭터 설정: ${gameState.playerPersonality}
 목표: ${gameState.playerGoal}
 
 플레이어 행동:
@@ -1251,7 +1882,7 @@ ${gameState.activeSceneGoal || "불명"}
 플레이어:
 이름: ${gameState.playerName}
 직업: ${gameState.playerJob}
-성격: ${gameState.playerPersonality}
+캐릭터 설정: ${gameState.playerPersonality}
 목표: ${gameState.playerGoal}
 
 플레이어 행동:
@@ -1778,7 +2409,194 @@ function applyRewardData(gameState, rewardData) {
 
   return messages;
 }
+async function judgeStoryMemory(gameState, playerChoice, aiText) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 RPG 장기 기억 관리 담당자다. 반드시 JSON만 출력한다."
+        },
+        {
+          role: "user",
+          content: `
+아래 장면을 보고 게임의 장기 기억을 갱신해라.
 
+현재 장기 기억:
+${storyMemoryText(gameState)}
+
+플레이어 행동:
+${playerChoice}
+
+이번 장면:
+${aiText}
+
+판정 규칙:
+- 장면에서 실제로 확정된 사실만 기록한다.
+- 추측, 분위기, 가능성만으로는 기록하지 않는다.
+- 구출, 실종, 납치, 보호, 동행 상태를 판단한다.
+- 연애, 호감, 고백, 교제, 이별, 삼각관계, 배우자 관계를 판단한다.
+- 결혼, 약혼, 가족 형성, 임신, 출산, 육아, 자녀 보호를 판단한다.
+- 친구, 동료, 은인, 적대자, 라이벌, 스승, 제자 관계를 판단한다.
+- 훈련 시작, 훈련 완료, 기술 습득, 시험 통과, 대회 참가, 승패를 판단한다.
+- 퀘스트 수락, 진행, 실패, 완료, 보상 미수령, 후속 의뢰를 판단한다.
+- 약속, 계약, 맹세, 빚, 거래 조건을 판단한다.
+- 한 번 완료된 사건은 completedThreads에 넣는다.
+- 아직 해결되지 않은 문제는 unresolvedThreads에 넣는다.
+- 앞으로 반복되면 안 되는 모순은 forbiddenContradictions에 넣는다.
+- 이미 완료된 일을 명확한 새 사건 없이 다시 미완료로 되돌리지 않는다.
+- 이미 동행자가 된 인물은 명확한 이탈 장면 없이 사라진 것처럼 쓰지 않는다.
+- 이미 연인/배우자/친구/라이벌이 된 관계는 이후에도 유지되어야 한다.
+- 장면에 없는 사실을 새로 만들지 않는다.
+- 모든 배열에는 짧은 한국어 문장만 넣는다.
+- JSON만 출력한다.
+
+형식:
+{
+  "mainGoal": "주 목표",
+  "goalStatus": "진행 중 / 부분 완료 / 완료 / 실패",
+  "currentObjective": "현재 목적",
+
+  "characters": ["주요 인물 기록"],
+  "companions": ["동행자 기록"],
+
+  "rescuedTargets": ["구출 완료 대상"],
+  "missingTargets": ["실종/납치/수색 대상"],
+
+  "relationships": ["관계 변화"],
+  "romance": ["연애 관련 사실"],
+  "marriage": ["결혼 관련 사실"],
+  "family": ["가족/육아 관련 사실"],
+  "children": ["자녀/아이 관련 사실"],
+
+  "friends": ["친구 관련 사실"],
+  "rivals": ["라이벌 관련 사실"],
+
+  "quests": ["퀘스트 기록"],
+  "promises": ["약속/계약/맹세 기록"],
+  "training": ["훈련 기록"],
+  "competitions": ["대회 기록"],
+
+  "importantFacts": ["중요한 사실"],
+  "unresolvedThreads": ["남은 문제"],
+  "completedThreads": ["완료된 사건"],
+  "forbiddenContradictions": ["앞으로 금지할 모순"]
+}
+`
+        }
+      ]
+    });
+
+    return parseJson(response.choices[0].message.content, null);
+  } catch {
+    return null;
+  }
+}
+
+function mergeStoryMemory(gameState, memoryUpdate) {
+  if (!memoryUpdate) return;
+
+  const memory = ensureStoryMemory(gameState);
+
+  if (memoryUpdate.mainGoal) {
+    memory.mainGoal = String(memoryUpdate.mainGoal).trim();
+  }
+
+  if (memoryUpdate.goalStatus) {
+    memory.goalStatus = String(memoryUpdate.goalStatus).trim();
+  }
+
+  if (memoryUpdate.currentObjective) {
+    memory.currentObjective = String(memoryUpdate.currentObjective).trim();
+  }
+
+  const mergeList = (key, max = 15) => {
+    memory[key] = uniqueList([
+      ...(memory[key] || []),
+      ...(Array.isArray(memoryUpdate[key]) ? memoryUpdate[key] : [])
+    ], max);
+  };
+
+  mergeList("characters", 20);
+  mergeList("companions", 12);
+
+  mergeList("rescuedTargets", 12);
+  mergeList("missingTargets", 12);
+
+  mergeList("relationships", 20);
+  mergeList("romance", 15);
+  mergeList("marriage", 12);
+  mergeList("family", 15);
+  mergeList("children", 12);
+
+  mergeList("friends", 15);
+  mergeList("rivals", 15);
+
+  mergeList("quests", 20);
+  mergeList("promises", 20);
+  mergeList("training", 15);
+  mergeList("competitions", 15);
+
+  mergeList("importantFacts", 25);
+  mergeList("unresolvedThreads", 20);
+  mergeList("completedThreads", 20);
+  mergeList("forbiddenContradictions", 20);
+
+  memory.rescuedTargets.forEach((rescuedName) => {
+    memory.missingTargets = memory.missingTargets.filter(
+      (missingName) =>
+        !missingName.includes(rescuedName) &&
+        !rescuedName.includes(missingName)
+    );
+  });
+
+  memory.completedThreads.forEach((completed) => {
+    memory.unresolvedThreads = memory.unresolvedThreads.filter(
+      (thread) =>
+        !thread.includes(completed) &&
+        !completed.includes(thread)
+    );
+  });
+
+  memory.rescuedTargets.forEach((rescuedName) => {
+    memory.forbiddenContradictions.push(
+      `${rescuedName}은 이미 구출되었으므로, 명확한 재납치/실종 장면 없이 다시 수색 대상으로 만들지 않는다.`
+    );
+  });
+
+  memory.companions.forEach((companion) => {
+    memory.forbiddenContradictions.push(
+      `${companion}은 동행자로 기록되었으므로, 명확한 이탈/사망/실종 장면 없이 없는 사람처럼 취급하지 않는다.`
+    );
+  });
+
+  memory.romance.forEach((romanceFact) => {
+    memory.forbiddenContradictions.push(
+      `연애 관계 기록 "${romanceFact}"와 충돌하는 장면을 명확한 이별/변심/갈등 없이 만들지 않는다.`
+    );
+  });
+
+  memory.marriage.forEach((marriageFact) => {
+    memory.forbiddenContradictions.push(
+      `결혼 관계 기록 "${marriageFact}"와 충돌하는 장면을 명확한 파혼/이별/사망 없이 만들지 않는다.`
+    );
+  });
+
+  memory.friends.forEach((friendFact) => {
+    memory.forbiddenContradictions.push(
+      `친구 관계 기록 "${friendFact}"와 충돌하는 장면을 명확한 배신/절교 없이 만들지 않는다.`
+    );
+  });
+
+  memory.rivals.forEach((rivalFact) => {
+    memory.forbiddenContradictions.push(
+      `라이벌 관계 기록 "${rivalFact}"를 이후 장면에서 유지한다.`
+    );
+  });
+
+  memory.forbiddenContradictions = uniqueList(memory.forbiddenContradictions, 20);
+}
 async function judgeStoryRewards(gameState, playerChoice, aiText) {
   try {
     const response = await openai.chat.completions.create({
@@ -2009,6 +2827,18 @@ gameState.playerPersonality =
 gameState.playerGoal =
   playerGoal ||
   "아직 정하지 못한 중대한 목표";
+  ensureStoryMemory(gameState);
+
+gameState.storyMemory.mainGoal = gameState.playerGoal;
+gameState.storyMemory.goalStatus = "진행 중";
+gameState.storyMemory.currentObjective = gameState.playerGoal;
+gameState.storyMemory.importantFacts = [
+  `플레이어의 중대한 목표는 ${gameState.playerGoal}이다.`,
+  `플레이어의 캐릭터 설정은 ${gameState.playerPersonality}이다.`
+];
+gameState.storyMemory.unresolvedThreads = [
+  `주 목표 "${gameState.playerGoal}"는 아직 해결되지 않았다.`
+];
 
   
 
@@ -2222,6 +3052,8 @@ ${dice}
       gameState.turn <= 40 ? "전" :
       "결";
       const antiLoopDirective = buildAntiLoopDirective(gameState, playerChoice);
+      const keeperDirective = buildKeeperDirective(gameState, playerChoice);
+      const keywordEventDirective = buildKeywordEventDirective(gameState, playerChoice);
 
     const prompt = `
 세계관:
@@ -2244,7 +3076,7 @@ ${storyPhase}
 플레이어:
 이름: ${gameState.playerName}
 직업: ${gameState.playerJob}
-성격: ${gameState.playerPersonality}
+캐릭터 설정: ${gameState.playerPersonality}
 중대한 목표: ${gameState.playerGoal}
 HP: ${gameState.hp}/${gameState.maxHp}
 MP: ${gameState.mp}/${gameState.maxMp}
@@ -2260,9 +3092,14 @@ ${playerChoice}
 직전 장면:
 ${gameState.lastScene || "게임 시작"}
 
+${storyMemoryText(gameState)}
+
 ${diceText}
 
 ${antiLoopDirective}
+${keeperDirective}
+
+${keywordEventDirective}
 
 규칙:
 - 플레이어 선택을 최우선으로 따른다.
@@ -2312,6 +3149,36 @@ ${antiLoopDirective}
 - 여관에서 돈을 내고 자면 HP와 MP가 모두 회복된다.
 - 여관 숙박 중에는 낮은 확률로 도둑에게 골드나 아이템을 잃을 수 있다.
 - 여관 숙박비 계산과 회복 처리는 서버가 담당한다.
+- 봉인, 의식, 기 모으기, 문 열기, 추격, 탈출, 설득, 대치 장면은 2턴 이상 같은 준비 상태로 반복하지 않는다.
+- “기운이 더 모였다”, “아직 부족하다”, “상황이 이어진다”만으로 장면을 끝내지 않는다.
+- 플레이어가 봉인/해제/파괴/돌파/처치를 선언하면 성공, 실패, 일부 성공, 대가 발생, 전투 발생 중 하나로 결론낸다.
+- 전투가 끝난 뒤에는 전투 전 장면으로 되돌리지 말고 반드시 다음 국면으로 넘어간다.
+- 준비 장면이 길어질 경우 필요한 조건을 명확히 밝히거나, 즉시 결말을 내거나, 새로운 목표로 전환한다.
+- 매 턴 이전 장면과 다른 새 사건을 최소 하나 넣는다.
+- 플레이어가 직접 입력한 행동의 핵심 단어를 장면의 중심 원인으로 삼는다.
+- 플레이어가 직접 쓴 대사를 주인공이 매 턴 그대로 반복하게 하지 않는다.
+- 같은 대사, 같은 준비, 같은 대치, 같은 설명을 두 턴 연속 반복하지 않는다.
+- 플레이어가 특정 행동을 직접 입력하면 그 행동의 결과, 반응, 대가, 단서 중 하나를 반드시 보여준다.
+- 새 사건은 플레이어의 목표나 방금 입력한 행동과 연결되어야 한다.
+- 장기 기억에 적힌 사실을 우선한다.
+- 구출, 연애, 결혼, 육아, 훈련, 대회, 친구, 라이벌, 퀘스트, 약속, 동행자 상태는 이후 장면에서도 유지한다.
+- 이미 완료된 사건은 명확한 새 사건 없이 다시 미완료로 되돌리지 않는다.
+- 이미 구출된 대상은 명확한 재납치/실종 장면 없이 다시 찾고 있는 대상으로 만들지 않는다.
+- 이미 동행자가 된 인물은 명확한 이탈/사망/실종 장면 없이 사라진 것처럼 쓰지 않는다.
+- 이미 연인, 배우자, 친구, 라이벌이 된 인물 관계는 명확한 변화 장면 없이 초기화하지 않는다.
+- 주 목표가 달성되면 같은 목표를 반복하지 말고 보호, 귀환, 후속 목표, 새 목표 확인으로 전환한다.
+- 중요한 인물의 상태가 바뀌면 그 변화가 이후 장면에 유지되어야 한다.
+- 직전 장면과 장기 기억이 충돌하면 장기 기억을 기준으로 한다.
+- 에이아이는 단순 서술자가 아니라 티알피지 키퍼처럼 장면을 운영한다.
+- 매 턴 플레이어의 목표, 현재 구간, 직전 사건, 장기 기억을 기준으로 새 사건을 배치한다.
+- 탐험, 발견, 전투, 퀘스트, 증거 수집, 요리, 수수께끼, 구출, 관계 변화, 훈련, 대회, 거래, 추적, 라이벌, 위기, 휴식 후 사건을 섞어서 사용한다.
+- 같은 종류의 사건을 2턴 연속 반복하지 않는다.
+- 플레이어가 직접 입력한 문장의 핵심 단어를 이번 장면의 중심축으로 삼는다.
+- 최종 목표는 후반부 전까지 쉽게 완결하지 않는다.
+- 최종 목표에 빨리 닿았을 경우, 완전한 종료가 아니라 부분 성공, 후속 문제, 배후 발견, 탈출, 보호, 추격, 새로운 조건으로 이어간다.
+- 구출 대상, 연인, 배우자, 친구, 라이벌, 동행자, 퀘스트 대상은 장기 기억과 충돌하지 않게 유지한다.
+- 이미 완료된 사건을 명확한 새 사건 없이 다시 미완료로 되돌리지 않는다.
+
 
 출력 형식:
 
@@ -2343,6 +3210,10 @@ ${antiLoopDirective}
 if (gameState.sameIntentCount >= 3) {
   aiText = await rewriteStalledScene(gameState, playerChoice, aiText);
   gameState.sameIntentCount = 0;
+}
+
+if (isSceneTooSimilar(gameState, aiText)) {
+  aiText = await rewriteTooSimilarScene(gameState, playerChoice, aiText);
 }
 
 const sceneProgressJudge = await judgeSceneProgress(gameState, playerChoice, aiText);
@@ -2479,6 +3350,8 @@ ${aiText}
         choices.push(`${use.name} (${use.cost}골드)`);
       });
     }
+    const memoryUpdate = await judgeStoryMemory(gameState, playerChoice, aiText);
+mergeStoryMemory(gameState, memoryUpdate);
 
     gameState.lastScene = aiText;
     gameState.lastChoices = choices;
