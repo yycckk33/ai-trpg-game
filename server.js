@@ -93,6 +93,10 @@ lastIntent: "",
 sameIntentCount: 0,
 sceneStallCount: 0,
 
+activeSceneGoal: "",
+lastSceneSummary: "",
+sceneGoalStallCount: 0,
+
 ended: false,
     combat: {
       active: false,
@@ -396,7 +400,35 @@ ${playerJob}
   }
 }
 
-async function generateMonsterStats(monsterName) {
+async function generateMonsterStats(monsterName, gameState) {
+  const turn = gameState?.turn || 1;
+
+  let hpMin = 6;
+  let hpMax = 24;
+  let attackMin = 1;
+  let attackMax = 5;
+
+  if (turn >= 11 && turn <= 25) {
+    hpMin = 12;
+    hpMax = 40;
+    attackMin = 2;
+    attackMax = 7;
+  }
+
+  if (turn >= 26 && turn <= 40) {
+    hpMin = 20;
+    hpMax = 60;
+    attackMin = 3;
+    attackMax = 9;
+  }
+
+  if (turn >= 41) {
+    hpMin = 30;
+    hpMax = 85;
+    attackMin = 4;
+    attackMax = 12;
+  }
+
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4.1-mini",
@@ -411,14 +443,22 @@ async function generateMonsterStats(monsterName) {
 전투 대상 이름:
 ${monsterName}
 
+현재 턴:
+${turn}
+
 이 대상의 전투 수치를 정해라.
 
 규칙:
-- HP는 5~120
-- 공격력은 1~20
-- 약한 대상은 약하게, 강한 대상은 강하게 만든다.
+- 현재 턴에 맞는 난이도로 만든다.
+- 초반에는 플레이어가 2~4턴 안에 죽지 않게 한다.
+- 일반 몬스터는 너무 강하게 만들지 않는다.
+- 보스급이라고 명시되지 않았다면 HP와 공격력을 낮게 잡는다.
 - 사람, 동물, 괴물, 이상한 생물 모두 가능하다.
 - JSON만 출력한다.
+
+허용 범위:
+- HP는 ${hpMin}~${hpMax}
+- 공격력은 ${attackMin}~${attackMax}
 
 형식:
 {
@@ -433,13 +473,13 @@ ${monsterName}
     const stats = parseJson(response.choices[0].message.content, {});
 
     return {
-      hp: clampNumber(stats.hp, 5, 120, 15),
-      attack: clampNumber(stats.attack, 1, 20, 5)
+      hp: clampNumber(stats.hp, hpMin, hpMax, Math.floor((hpMin + hpMax) / 2)),
+      attack: clampNumber(stats.attack, attackMin, attackMax, Math.floor((attackMin + attackMax) / 2))
     };
   } catch {
     return {
-      hp: 15,
-      attack: 5
+      hp: Math.floor((hpMin + hpMax) / 2),
+      attack: Math.floor((attackMin + attackMax) / 2)
     };
   }
 }
@@ -495,7 +535,7 @@ ${dice}
 }
 
 async function startCombat(gameState, monsterName = "적") {
-  const monster = await generateMonsterStats(monsterName);
+  const monster = await generateMonsterStats(monsterName, gameState);
 
   gameState.shop.active = false;
 
@@ -890,25 +930,33 @@ async function handleCombat(gameState, choice) {
   }
 
   if (combat.monsterHp <= 0) {
-    const reward = await finishCombat(gameState, dice);
+  const reward = await finishCombat(gameState, dice);
 
-    text += `\n${reward.monsterName}은 쓰러졌다.\n`;
-    text += `${reward.rewardReason}으로 ${reward.rewardGold}골드를 얻었다.\n`;
+  text += `\n${reward.monsterName}은 쓰러졌다.\n`;
+  text += `${reward.rewardReason}으로 ${reward.rewardGold}골드를 얻었다.\n`;
 
-    return {
-      text,
-      choices: ["전리품을 확인한다", "주변을 조사한다", "다시 길을 떠난다"],
-      dice,
-      turn: gameState.turn,
-      state: gameState
-    };
-  }
+  gameState.lastScene =
+    `${reward.monsterName}과의 전투는 끝났다. ` +
+    `${reward.monsterName}은 쓰러졌고, 플레이어는 전투 이후의 다음 국면으로 넘어간다.`;
+
+  gameState.activeSceneGoal = "";
+  gameState.lastSceneSummary = gameState.lastScene;
+  gameState.sceneGoalStallCount = 0;
+
+  return {
+    text,
+    choices: ["전리품을 확인한다", "주변을 조사한다", "다시 길을 떠난다"],
+    dice,
+    turn: gameState.turn,
+    state: gameState
+  };
+}
 
   if (enemyCanCounter) {
     const enemyDamage = Math.max(
-      1,
-      combat.monsterAttack - gameState.defenseBonus
-    );
+  1,
+  Math.ceil(combat.monsterAttack * 0.75) - gameState.defenseBonus
+);
 
     gameState.hp -= enemyDamage;
 
@@ -1073,6 +1121,164 @@ ${aiText}
 
 설명:
 (수정된 설명)
+
+선택지:
+1. (선택지)
+2. (선택지)
+3. (선택지)
+`
+        }
+      ]
+    });
+
+    return response.choices[0].message.content;
+  } catch {
+    return aiText;
+  }
+}
+async function judgeSceneProgress(gameState, playerChoice, aiText) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 RPG 장면 진행 판정기다. 반드시 JSON만 출력한다."
+        },
+        {
+          role: "user",
+          content: `
+아래 장면이 이전 장면과 같은 문제를 반복하는지 판정해라.
+
+이전 장면 목표:
+${gameState.activeSceneGoal || "없음"}
+
+이전 장면 요약:
+${gameState.lastSceneSummary || "없음"}
+
+플레이어 행동:
+${playerChoice}
+
+이번 장면:
+${aiText}
+
+판정 기준:
+- 봉인, 의식, 기 모으기, 문 열기, 설득, 추격, 탈출, 전투 준비, 대치, 협상 같은 장면 목표가 해결되지 않고 같은 준비만 반복되면 stalled를 true로 한다.
+- 전투가 발생했지만 전투 후 다시 같은 봉인/의식/대치 상태로 돌아갈 가능성이 높으면 stalled를 true로 한다.
+- 목표가 성공, 실패, 파괴, 해제, 봉인 완료, 봉인 실패, 도주, 사망, 항복, 새 장소 이동, 명확한 단서 획득으로 변하면 progressed를 true로 한다.
+- 단순히 “기운이 모였다”, “긴장이 커졌다”, “사람들이 바라본다” 정도면 progressed는 false다.
+- 목표가 완전히 끝났으면 resolved를 true로 한다.
+- 새로운 장면 목표가 생겼으면 activeGoal에 짧게 적는다.
+- JSON만 출력한다.
+
+형식:
+{
+  "activeGoal": "현재 장면 목표",
+  "summary": "이번 장면 짧은 요약",
+  "stalled": true 또는 false,
+  "progressed": true 또는 false,
+  "resolved": true 또는 false
+}
+`
+        }
+      ]
+    });
+
+    return parseJson(response.choices[0].message.content, {
+      activeGoal: gameState.activeSceneGoal || "",
+      summary: "",
+      stalled: false,
+      progressed: true,
+      resolved: false
+    });
+  } catch {
+    return {
+      activeGoal: gameState.activeSceneGoal || "",
+      summary: "",
+      stalled: false,
+      progressed: true,
+      resolved: false
+    };
+  }
+}
+
+function applySceneProgressJudge(gameState, judge) {
+  const activeGoal = String(judge.activeGoal || "").trim();
+  const summary = String(judge.summary || "").trim();
+
+  if (judge.resolved) {
+    gameState.activeSceneGoal = "";
+    gameState.lastSceneSummary = summary;
+    gameState.sceneGoalStallCount = 0;
+    return;
+  }
+
+  if (activeGoal) {
+    if (gameState.activeSceneGoal === activeGoal && judge.stalled && !judge.progressed) {
+      gameState.sceneGoalStallCount += 1;
+    } else if (gameState.activeSceneGoal === activeGoal && judge.progressed) {
+      gameState.sceneGoalStallCount = 0;
+    } else {
+      gameState.sceneGoalStallCount = 0;
+    }
+
+    gameState.activeSceneGoal = activeGoal;
+  }
+
+  if (summary) {
+    gameState.lastSceneSummary = summary;
+  }
+}
+
+async function forceResolveSceneGoal(gameState, playerChoice, aiText) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: "너는 반복되는 RPG 장면을 강제로 결론 내는 편집자다."
+        },
+        {
+          role: "user",
+          content: `
+아래 장면은 너무 오래 반복되고 있다.
+이번 출력 안에서 반드시 결론을 내라.
+
+현재 장면 목표:
+${gameState.activeSceneGoal || "불명"}
+
+플레이어:
+이름: ${gameState.playerName}
+직업: ${gameState.playerJob}
+성격: ${gameState.playerPersonality}
+목표: ${gameState.playerGoal}
+
+플레이어 행동:
+${playerChoice}
+
+반복된 장면:
+${aiText}
+
+강제 결론 규칙:
+- 봉인/의식/기 모으기 상황이면 반드시 아래 중 하나로 결론낸다.
+  1. 봉인 성공
+  2. 봉인 실패
+  3. 봉인 일부 성공 후 대가 발생
+  4. 필요한 조건이 명확히 드러나고 새 목표로 전환
+  5. 전투 발생
+- “기운이 더 모였다”, “의식이 이어졌다”, “아직 부족하다”만으로 끝내지 않는다.
+- 전투가 끝난 뒤라면 전투 전 상태로 되돌리지 않는다.
+- 플레이어가 강한 행동을 선언했다면 성공/실패/대가를 확정한다.
+- 장면은 반드시 다음 국면으로 넘어간다.
+- 전투가 필요하면 마지막 줄에 [전투발생:전투대상이름]을 붙인다.
+- 골드나 아이템 변화가 있으면 기존 태그 형식을 사용한다.
+- 선택지는 3개만 만든다.
+
+출력 형식:
+
+설명:
+(결론이 난 설명)
 
 선택지:
 1. (선택지)
@@ -2137,6 +2343,15 @@ ${antiLoopDirective}
 if (gameState.sameIntentCount >= 3) {
   aiText = await rewriteStalledScene(gameState, playerChoice, aiText);
   gameState.sameIntentCount = 0;
+}
+
+const sceneProgressJudge = await judgeSceneProgress(gameState, playerChoice, aiText);
+applySceneProgressJudge(gameState, sceneProgressJudge);
+
+if (gameState.sceneGoalStallCount >= 2) {
+  aiText = await forceResolveSceneGoal(gameState, playerChoice, aiText);
+  gameState.sceneGoalStallCount = 0;
+  gameState.activeSceneGoal = "";
 }
 
 aiText = parseGoldUses(gameState, aiText);
